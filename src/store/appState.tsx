@@ -219,7 +219,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     barbotines,
     seriesM7,
     bounds,
-    setBounds: (metric, next) => setBoundsState(prev => ({ ...prev, [metric]: next })),
+    setBounds: (metric, next) => setBoundsState((prev: any) => ({ ...prev, [metric]: next })),
     overrideLog,
     startMassTest,
     addOverride,
@@ -228,19 +228,20 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addManualSample,
     live,
     setLive,
+    doseRateHistory,
     getSeriesForRange: (range, anchorTs) => {
       if (range === 'all') return seriesM7;
-      // génère une série simulée déterministe pour la période
+      // génère une série simulée déterministe pour la période, ancrée sur anchorTs (ou maintenant)
       const nowTs = Date.now();
-      let start = nowTs - 3 * 60 * 60 * 1000;
-      let end = nowTs;
-      let step = 5000;
-      if (range === '3h') { start = nowTs - 3 * 60 * 60 * 1000; step = 30 * 1000; }
-      if (range === '1d') { start = nowTs - 24 * 60 * 60 * 1000; step = 10 * 60 * 1000; }
-      if (range === '7d') { start = nowTs - 7 * 24 * 60 * 60 * 1000; step = 60 * 60 * 1000; }
-      if (range === '1m') { start = nowTs - 30 * 24 * 60 * 60 * 1000; step = 6 * 60 * 60 * 1000; }
-      if (range === '3m') { start = nowTs - 90 * 24 * 60 * 60 * 1000; step = 12 * 60 * 60 * 1000; }
-      if (range === 'specific' && anchorTs) { start = anchorTs; end = anchorTs + 60 * 60 * 1000; step = 60 * 1000; }
+      let end = Math.min(anchorTs ?? nowTs, nowTs);
+      let start = end - 3 * 60 * 60 * 1000; // 3h par défaut
+      let step = 30 * 1000;
+      if (range === '1d') { start = end - 24 * 60 * 60 * 1000; step = 10 * 60 * 1000; }
+      else if (range === '7d') { start = end - 7 * 24 * 60 * 60 * 1000; step = 60 * 60 * 1000; }
+      else if (range === '1m') { start = end - 30 * 24 * 60 * 60 * 1000; step = 6 * 60 * 60 * 1000; }
+      else if (range === '3m') { start = end - 90 * 24 * 60 * 60 * 1000; step = 12 * 60 * 60 * 1000; }
+      else if (range === '3h') { start = end - 3 * 60 * 60 * 1000; step = 30 * 1000; }
+      else if (range === 'specific' && anchorTs) { start = anchorTs; end = anchorTs + 60 * 60 * 1000; step = 60 * 1000; }
 
       const simRng = createMulberry32(seedParam + Math.floor(start / step));
       const generateBetween = (base: number, jitter: number, drift: number, min: number, max: number): MetricSample[] => {

@@ -23,85 +23,36 @@ export default function Detail() {
   const [viscRange, setViscRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
   const [tempRange, setTempRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
   const [phRange, setPhRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
-  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all'>('7d');
-  const [specificTs, setSpecificTs] = useState<string>('');
-  const [showMenu, setShowMenu] = useState<string | null>(null);
-
-  // Pan/zoom support with fixed-duration windows
-  function rangeToMs(r: '3h' | '1d' | '7d' | '1m' | '3m' | 'all' | 'specific'): number {
-    if (r === '3h') return 3 * 60 * 60 * 1000;
-    if (r === '1d') return 24 * 60 * 60 * 1000;
-    if (r === '7d') return 7 * 24 * 60 * 60 * 1000;
-    if (r === '1m') return 30 * 24 * 60 * 60 * 1000;
-    if (r === '3m') return 90 * 24 * 60 * 60 * 1000;
-    // Treat 'all' as a long window for panning; 'specific' uses explicit anchor
-    return 365 * 24 * 60 * 60 * 1000;
-  }
-
-  // Per-chart window end anchors (keeps window size constant when panning)
-  const [densEndTs, setDensEndTs] = useState<number>(() => Date.now());
-  const [viscEndTs, setViscEndTs] = useState<number>(() => Date.now());
-  const [tempEndTs, setTempEndTs] = useState<number>(() => Date.now());
-  const [phEndTs, setPhEndTs] = useState<number>(() => Date.now());
-  const [doseRange, setDoseRange] = useState<'3h' | '1d' | '7d' | '1m' | '3m' | 'all'>('3h');
-  const [doseEndTs, setDoseEndTs] = useState<number>(() => Date.now());
-  const [pcEndTs, setPcEndTs] = useState<number>(() => Date.now());
-
-  // Reset anchors on range change to snap to "now"
-  const resetAnchorNow = () => Date.now();
-
-  // Y domains with pan support
+  // anchors for horizontal pan per chart
+  const [densAnchor, setDensAnchor] = useState<number | undefined>(undefined);
+  const [viscAnchor, setViscAnchor] = useState<number | undefined>(undefined);
+  const [tempAnchor, setTempAnchor] = useState<number | undefined>(undefined);
+  const [phAnchor, setPhAnchor] = useState<number | undefined>(undefined);
+  // vertical y domains adjustable by drag on Y axis area
   const [densY, setDensY] = useState<[number, number]>([1.2, 1.5]);
   const [viscY, setViscY] = useState<[number, number]>([250, 700]);
   const [tempY, setTempY] = useState<[number, number]>([15, 35]);
   const [phY, setPhY] = useState<[number, number]>([6.5, 9.8]);
-  const [doseY, setDoseY] = useState<[number, number]>([0, 0.1]);
-  const [pcY, setPcY] = useState<[number, number]>([40, 80]);
+  // drag state
+  const dragRef = useRef<{ startX: number; startY: number; startAnchor: number; startYMin: number; startYMax: number; mode: 'x' | 'y' | null } | null>(null);
+  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all'>('7d');
+  const [specificTs, setSpecificTs] = useState<string>('');
+  const [showMenu, setShowMenu] = useState<string | null>(null);
 
-  // Chart refs for measuring size during pan
-  const densRef = useRef<HTMLDivElement | null>(null);
-  const viscRef = useRef<HTMLDivElement | null>(null);
-  const tempRef = useRef<HTMLDivElement | null>(null);
-  const phRef = useRef<HTMLDivElement | null>(null);
-  const doseRef = useRef<HTMLDivElement | null>(null);
-  const pcRef = useRef<HTMLDivElement | null>(null);
-
-  const densiteData = useMemo(() => {
-    const ms = densRange === 'specific' && specificTs ? 60 * 60 * 1000 : rangeToMs(densRange);
-    const end = densRange === 'specific' && specificTs ? Date.parse(specificTs) + ms : densEndTs;
-    const start = end - ms;
-    return getSeriesBetween(start, end).densite.map(p => ({ time: p.t, value: Number(p.v.toFixed(3)) }));
-  }, [densRange, specificTs, densEndTs, getSeriesBetween]);
-  const viscositeData = useMemo(() => {
-    const ms = viscRange === 'specific' && specificTs ? 60 * 60 * 1000 : rangeToMs(viscRange);
-    const end = viscRange === 'specific' && specificTs ? Date.parse(specificTs) + ms : viscEndTs;
-    const start = end - ms;
-    return getSeriesBetween(start, end).viscosite.map(p => ({ time: p.t, value: Math.round(p.v) }));
-  }, [viscRange, specificTs, viscEndTs, getSeriesBetween]);
-  const tempData = useMemo(() => {
-    const ms = tempRange === 'specific' && specificTs ? 60 * 60 * 1000 : rangeToMs(tempRange);
-    const end = tempRange === 'specific' && specificTs ? Date.parse(specificTs) + ms : tempEndTs;
-    const start = end - ms;
-    return getSeriesBetween(start, end).temperature.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) }));
-  }, [tempRange, specificTs, tempEndTs, getSeriesBetween]);
-  const phData = useMemo(() => {
-    const ms = phRange === 'specific' && specificTs ? 60 * 60 * 1000 : rangeToMs(phRange);
-    const end = phRange === 'specific' && specificTs ? Date.parse(specificTs) + ms : phEndTs;
-    const start = end - ms;
-    return getSeriesBetween(start, end).ph.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) }));
-  }, [phRange, specificTs, phEndTs, getSeriesBetween]);
+  const densSource = densRange === 'all' ? seriesM7.densite : getSeriesForRange(densRange, densAnchor ?? (specificTs ? Date.parse(specificTs) : undefined)).densite;
+  const viscSource = viscRange === 'all' ? seriesM7.viscosite : getSeriesForRange(viscRange, viscAnchor ?? (specificTs ? Date.parse(specificTs) : undefined)).viscosite;
+  const tempSource = tempRange === 'all' ? seriesM7.temperature : getSeriesForRange(tempRange, tempAnchor ?? (specificTs ? Date.parse(specificTs) : undefined)).temperature;
+  const phSource = phRange === 'all' ? seriesM7.ph : getSeriesForRange(phRange, phAnchor ?? (specificTs ? Date.parse(specificTs) : undefined)).ph;
+  const densiteData = useMemo(() => densSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(3)) })), [densSource]);
+  const viscositeData = useMemo(() => viscSource.map(p => ({ time: p.t, value: Math.round(p.v) })), [viscSource]);
+  const phData = useMemo(() => phSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [phSource]);
+  const tempData = useMemo(() => tempSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [tempSource]);
   const pcHistData = useMemo(() => {
+    const now = Date.now();
     const ms = pcRange === '7d' ? 7*24*60*60*1000 : pcRange === '1m' ? 30*24*60*60*1000 : pcRange === '3m' ? 90*24*60*60*1000 : 365*24*60*60*1000;
-    const end = pcEndTs; const start = end - ms;
-    return coverPowerHistory.filter(p => p.t >= start && p.t <= end);
-  }, [coverPowerHistory, pcRange, pcEndTs]);
-
-  const doseHistData = useMemo(() => {
-    const ms = rangeToMs(doseRange);
-    const end = doseEndTs;
-    const start = end - ms;
-    return doseRateHistory.filter(p => p.t >= start && p.t <= end);
-  }, [doseRateHistory, doseRange, doseEndTs]);
+    const start = now - ms;
+    return coverPowerHistory.filter(p => p.t >= start);
+  }, [coverPowerHistory, pcRange]);
 
   const reco = viscositeData.length ? (viscositeData[viscositeData.length - 1].value > bounds.viscosite.high ? 'Ajouter eau' : 'Ne rien faire') : '—';
 
@@ -121,12 +72,13 @@ export default function Detail() {
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Densité (g/cm³)</h3>
-            <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => { setDensRange(r); setDensEndTs(resetAnchorNow()); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
-              ))}
-              <span className="seg-sep"></span>
-              <button className="seg-btn ellipsis" title="Plus" onClick={() => setShowMenu('densite')}>…</button>
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <div className="segmented">
+                {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
+                  <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => setDensRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                ))}
+                <button className="seg-btn" title="Plus" onClick={() => setShowMenu('densite')}>…</button>
+              </div>
             </div>
           </div>
           {showMenu==='densite' && (
@@ -154,7 +106,35 @@ export default function Detail() {
               </div>
             </div>
           )}
-          <div className="chart" ref={densRef} style={{ position: 'relative' }}>
+          <div className="chart">
+            <div
+              className="pan-layer"
+              onMouseDown={(e) => {
+                const lastT = densiteData[densiteData.length-1]?.time ?? Date.now();
+                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: densAnchor ?? lastT, startYMin: densY[0], startYMax: densY[1], mode: null };
+                (e.currentTarget as HTMLDivElement).classList.add('dragging');
+              }}
+              onMouseMove={(e) => {
+                if (!dragRef.current) return;
+                const dx = e.clientX - dragRef.current.startX;
+                const dy = e.clientY - dragRef.current.startY;
+                if (!dragRef.current.mode) {
+                  dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+                }
+                if (dragRef.current.mode === 'x') {
+                  const windowMs = densRange==='3h'?3*3600e3:densRange==='1d'?24*3600e3:densRange==='7d'?7*24*3600e3:densRange==='1m'?30*24*3600e3:densRange==='3m'?90*24*3600e3:3600e3;
+                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
+                  setDensAnchor(dragRef.current.startAnchor + dx * scale);
+                } else {
+                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
+                  const range = max0 - min0;
+                  const perPx = range / (e.currentTarget.clientHeight || 1);
+                  setDensY([Number((min0+dy*perPx).toFixed(3)), Number((max0+dy*perPx).toFixed(3))]);
+                }
+              }}
+              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+            />
             <ResponsiveContainer>
               <LineChart data={densiteData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
@@ -165,69 +145,46 @@ export default function Detail() {
                 <Line type="monotone" dataKey="value" stroke="#60a5fa" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
-            <div
-              style={{ position: 'absolute', inset: 0, cursor: 'grab' }}
-              onPointerDown={(e) => {
-                const el = densRef.current; if (!el) return;
-                const rect = el.getBoundingClientRect();
-                const startX = e.clientX; const startY = e.clientY;
-                const width = rect.width; const height = rect.height;
-                const startEnd = densEndTs; const ms = (densRange === 'specific' && specificTs) ? (60 * 60 * 1000) : rangeToMs(densRange);
-                const startYDom = densY;
-                const onMove = (ev: PointerEvent) => {
-                  const dx = ev.clientX - startX; const dy = ev.clientY - startY;
-                  const deltaMs = Math.round(dx * ms / width);
-                  setDensEndTs(startEnd - deltaMs);
-                  if ((ev.clientX - rect.left) < 56) {
-                    const [yMin,yMax] = startYDom; const valPerPixel = (yMax - yMin) / height; const dVal = dy * valPerPixel;
-                    setDensY([yMin - dVal, yMax - dVal]);
-                  }
-                };
-                const onUp = () => { window.removeEventListener('pointermove', onMove); };
-                window.addEventListener('pointermove', onMove);
-                window.addEventListener('pointerup', onUp, { once: true });
-              }}
-            />
           </div>
         </div>
-        {/* Row 1: Viscosité (right) */}
+        {/* Row 1 right: Viscosité */}
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Viscosité (mPa·s)</h3>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => { setViscRange(r); setViscEndTs(resetAnchorNow()); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => setViscRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
-              <span className="seg-sep"></span>
-              <button className="seg-btn ellipsis" title="Plus" onClick={() => setShowMenu('visco')}>…</button>
+              <button className="seg-btn" title="Plus" onClick={() => setShowMenu('visco')}>…</button>
             </div>
           </div>
-          {showMenu==='visco' && (
-            <div className="modal-backdrop" onClick={() => setShowMenu(null)}>
-              <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                  <h3 style={{ margin: 0 }}>Options Viscosité</h3>
-                  <button onClick={() => setShowMenu(null)}>Fermer</button>
-                </div>
-                <div className="modal-body">
-                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                    <label>Période personnalisée:</label>
-                    <input type="datetime-local" onChange={e => { setSpecificTs(e.target.value); setViscRange('specific'); }} />
-                  </div>
-                  <div className="row" style={{ gap: 8 }}>
-                    <label>Conformité min/max:</label>
-                    <input style={{ width: 90 }} value={bounds.viscosite.low} onChange={e => setBounds('viscosite', { ...bounds.viscosite, low: Number(e.target.value) })} />
-                    <input style={{ width: 90 }} value={bounds.viscosite.high} onChange={e => setBounds('viscosite', { ...bounds.viscosite, high: Number(e.target.value) })} />
-                  </div>
-                  <div className="row" style={{ gap: 8 }}>
-                    <label>Unité:</label>
-                    <select value={'mPa·s'} onChange={()=>{}}><option value="mPa·s">mPa·s</option></select>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="chart" ref={viscRef} style={{ position: 'relative' }}>
+          <div className="chart">
+            <div
+              className="pan-layer"
+              onMouseDown={(e) => {
+                const lastT = viscositeData[viscositeData.length-1]?.time ?? Date.now();
+                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: viscAnchor ?? lastT, startYMin: viscY[0], startYMax: viscY[1], mode: null };
+                (e.currentTarget as HTMLDivElement).classList.add('dragging');
+              }}
+              onMouseMove={(e) => {
+                if (!dragRef.current) return;
+                const dx = e.clientX - dragRef.current.startX;
+                const dy = e.clientY - dragRef.current.startY;
+                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+                if (dragRef.current.mode === 'x') {
+                  const windowMs = viscRange==='3h'?3*3600e3:viscRange==='1d'?24*3600e3:viscRange==='7d'?7*24*3600e3:viscRange==='1m'?30*24*3600e3:viscRange==='3m'?90*24*3600e3:3600e3;
+                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
+                  setViscAnchor(dragRef.current.startAnchor + dx * scale);
+                } else {
+                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
+                  const range = max0 - min0;
+                  const perPx = range / (e.currentTarget.clientHeight || 1);
+                  setViscY([Math.round(min0+dy*perPx), Math.round(max0+dy*perPx)] as any);
+                }
+              }}
+              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+            />
             <ResponsiveContainer>
               <LineChart data={viscositeData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
@@ -238,79 +195,32 @@ export default function Detail() {
                 <Line type="monotone" dataKey="value" stroke="#34d399" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
-            <div
-              style={{ position: 'absolute', inset: 0, cursor: 'grab' }}
-              onPointerDown={(e) => {
-                const el = viscRef.current; if (!el) return;
-                const rect = el.getBoundingClientRect();
-                const startX = e.clientX; const startY = e.clientY;
-                const width = rect.width; const height = rect.height;
-                const startEnd = viscEndTs; const ms = (viscRange === 'specific' && specificTs) ? (60 * 60 * 1000) : rangeToMs(viscRange);
-                const startYDom = viscY;
-                const onMove = (ev: PointerEvent) => {
-                  const dx = ev.clientX - startX; const dy = ev.clientY - startY;
-                  const deltaMs = Math.round(dx * ms / width);
-                  setViscEndTs(startEnd - deltaMs);
-                  if ((ev.clientX - rect.left) < 56) {
-                    const [yMin,yMax] = startYDom; const valPerPixel = (yMax - yMin) / height; const dVal = dy * valPerPixel;
-                    setViscY([yMin - dVal, yMax - dVal]);
-                  }
-                };
-                const onUp = () => { window.removeEventListener('pointermove', onMove); };
-                window.addEventListener('pointermove', onMove);
-                window.addEventListener('pointerup', onUp, { once: true });
-              }}
-            />
           </div>
         </div>
-
-        {/* Row 2: Pouvoir couvrant - Historique */}
+        {/* Row 2 left: Pouvoir couvrant - Historique */}
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Pouvoir couvrant - Historique (g)</h3>
             <div className="segmented">
               {(['7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => { setPcRange(r); setPcEndTs(resetAnchorNow()); }}>{r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => setPcRange(r)}>{r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
             </div>
           </div>
-          <div className="chart" ref={pcRef} style={{ height: 220, position: 'relative' }}>
+          <div className="chart" style={{ height: 220 }}>
             <ResponsiveContainer>
               <LineChart data={pcHistData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
                 <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis domain={pcY as any} stroke="#6b7280" />
+                <YAxis stroke="#6b7280" />
                 <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={(value) => [`${value} g`, 'Pouvoir couvrant']} />
                 <ReferenceArea y1={50} y2={70} fill="#22c55e" fillOpacity={0.08} />
                 <Line type="monotone" dataKey="v" stroke="#38bdf8" dot={true} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
-            <div
-              style={{ position: 'absolute', inset: 0, cursor: 'grab' }}
-              onPointerDown={(e) => {
-                const el = pcRef.current; if (!el) return;
-                const rect = el.getBoundingClientRect();
-                const startX = e.clientX; const startY = e.clientY;
-                const width = rect.width; const height = rect.height;
-                const startEnd = pcEndTs; const ms = pcRange === '7d' ? 7*24*60*60*1000 : pcRange === '1m' ? 30*24*60*60*1000 : pcRange === '3m' ? 90*24*60*60*1000 : 365*24*60*60*1000;
-                const startYDom = pcY;
-                const onMove = (ev: PointerEvent) => {
-                  const dx = ev.clientX - startX; const dy = ev.clientY - startY;
-                  const deltaMs = Math.round(dx * ms / width);
-                  setPcEndTs(startEnd - deltaMs);
-                  if ((ev.clientX - rect.left) < 56) {
-                    const [yMin,yMax] = startYDom; const valPerPixel = (yMax - yMin) / height; const dVal = dy * valPerPixel;
-                    setPcY([yMin - dVal, yMax - dVal]);
-                  }
-                };
-                const onUp = () => { window.removeEventListener('pointermove', onMove); };
-                window.addEventListener('pointermove', onMove);
-                window.addEventListener('pointerup', onUp, { once: true });
-              }}
-            />
           </div>
         </div>
-        {/* Row 2: Pouvoir couvrant - Essai */}
+        {/* Row 2 right: Pouvoir couvrant - Essai */}
         <div className="panel">
           <h3>Pouvoir couvrant - Essai (g)</h3>
           <div className="actions">
@@ -362,76 +272,195 @@ export default function Detail() {
             </ResponsiveContainer>
           </div>
         </div>
+        {/* Row 4: Température (left) */}
+        <div className="panel">
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Température (°C)</h3>
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <div className="segmented">
+                {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
+                  <button key={r} className={`seg-btn ${tempRange===r?'active':''}`} onClick={() => setTempRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                ))}
+                <button className="seg-btn" title="Plus" onClick={() => setShowMenu('temp')}>…</button>
+              </div>
+            </div>
+          </div>
+          {showMenu==='temp' && (
+            <div className="modal-backdrop" onClick={() => setShowMenu(null)}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3 style={{ margin: 0 }}>Options Température</h3>
+                  <button onClick={() => setShowMenu(null)}>Fermer</button>
+                </div>
+                <div className="modal-body">
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <label>Période personnalisée:</label>
+                    <input type="datetime-local" onChange={e => { setSpecificTs(e.target.value); setTempRange('specific'); }} />
+                  </div>
+                  <div className="row" style={{ gap: 8 }}>
+                    <label>Conformité min/max:</label>
+                    <input style={{ width: 90 }} value={bounds.temperature.low} onChange={e => setBounds('temperature', { ...bounds.temperature, low: Number(e.target.value) })} />
+                    <input style={{ width: 90 }} value={bounds.temperature.high} onChange={e => setBounds('temperature', { ...bounds.temperature, high: Number(e.target.value) })} />
+                  </div>
+                  <div className="row" style={{ gap: 8 }}>
+                    <label>Unité:</label>
+                    <select value={'°C'} onChange={()=>{}}><option value="°C">°C</option></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="chart">
+            <div
+              className="pan-layer"
+              onMouseDown={(e) => {
+                const lastT = tempData[tempData.length-1]?.time ?? Date.now();
+                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: tempAnchor ?? lastT, startYMin: tempY[0], startYMax: tempY[1], mode: null };
+                (e.currentTarget as HTMLDivElement).classList.add('dragging');
+              }}
+              onMouseMove={(e) => {
+                if (!dragRef.current) return;
+                const dx = e.clientX - dragRef.current.startX;
+                const dy = e.clientY - dragRef.current.startY;
+                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+                if (dragRef.current.mode === 'x') {
+                  const windowMs = tempRange==='3h'?3*3600e3:tempRange==='1d'?24*3600e3:tempRange==='7d'?7*24*3600e3:tempRange==='1m'?30*24*3600e3:tempRange==='3m'?90*24*3600e3:3600e3;
+                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
+                  setTempAnchor(dragRef.current.startAnchor + dx * scale);
+                } else {
+                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
+                  const range = max0 - min0;
+                  const perPx = range / (e.currentTarget.clientHeight || 1);
+                  setTempY([Number((min0+dy*perPx).toFixed(2)), Number((max0+dy*perPx).toFixed(2))]);
+                }
+              }}
+              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+            />
+            <ResponsiveContainer>
+              <LineChart data={tempData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
+                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
+                <YAxis domain={tempY as any} stroke="#6b7280" />
+                <Tooltip labelFormatter={v => formatDateTime(Number(v))} />
+                <ReferenceArea y1={bounds.temperature.low} y2={bounds.temperature.high} fill="#22c55e" fillOpacity={0.08} />
+                <Line type="monotone" dataKey="value" stroke="#f59e0b" dot={false} strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        {/* Row 4 right: pH */}
+        <div className="panel">
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>pH</h3>
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <div className="segmented">
+                {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
+                  <button key={r} className={`seg-btn ${phRange===r?'active':''}`} onClick={() => setPhRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                ))}
+                <button className="seg-btn" title="Plus" onClick={() => setShowMenu('ph')}>…</button>
+              </div>
+            </div>
+          </div>
+          {showMenu==='ph' && (
+            <div className="modal-backdrop" onClick={() => setShowMenu(null)}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3 style={{ margin: 0 }}>Options pH</h3>
+                  <button onClick={() => setShowMenu(null)}>Fermer</button>
+                </div>
+                <div className="modal-body">
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <label>Période personnalisée:</label>
+                    <input type="datetime-local" onChange={e => { setSpecificTs(e.target.value); setPhRange('specific'); }} />
+                  </div>
+                  <div className="row" style={{ gap: 8 }}>
+                    <label>Conformité min/max:</label>
+                    <input style={{ width: 90 }} value={bounds.ph.low} onChange={e => setBounds('ph', { ...bounds.ph, low: Number(e.target.value) })} />
+                    <input style={{ width: 90 }} value={bounds.ph.high} onChange={e => setBounds('ph', { ...bounds.ph, high: Number(e.target.value) })} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="chart">
+            <div
+              className="pan-layer"
+              onMouseDown={(e) => {
+                const lastT = phData[phData.length-1]?.time ?? Date.now();
+                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: phAnchor ?? lastT, startYMin: phY[0], startYMax: phY[1], mode: null };
+                (e.currentTarget as HTMLDivElement).classList.add('dragging');
+              }}
+              onMouseMove={(e) => {
+                if (!dragRef.current) return;
+                const dx = e.clientX - dragRef.current.startX;
+                const dy = e.clientY - dragRef.current.startY;
+                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+                if (dragRef.current.mode === 'x') {
+                  const windowMs = phRange==='3h'?3*3600e3:phRange==='1d'?24*3600e3:phRange==='7d'?7*24*3600e3:phRange==='1m'?30*24*3600e3:phRange==='3m'?90*24*3600e3:3600e3;
+                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
+                  setPhAnchor(dragRef.current.startAnchor + dx * scale);
+                } else {
+                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
+                  const range = max0 - min0;
+                  const perPx = range / (e.currentTarget.clientHeight || 1);
+                  setPhY([Number((min0+dy*perPx).toFixed(2)), Number((max0+dy*perPx).toFixed(2))]);
+                }
+              }}
+              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+            />
+            <ResponsiveContainer>
+              <LineChart data={phData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
+                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
+                <YAxis domain={phY as any} stroke="#6b7280" />
+                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={(v)=>[`${v}`, 'pH']} />
+                <ReferenceArea y1={bounds.ph.low} y2={bounds.ph.high} fill="#22c55e" fillOpacity={0.08} />
+                <Line type="monotone" dataKey="value" stroke="#f472b6" dot={false} strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
-
       {testState === 'termine' && (
         <div className="section" style={{ marginTop: 12 }}>
-          {/* Row 3: Photo plaque (left) */}
+          {/* Row 3: photo + analyse, each same panel size */}
           <div className="panel">
             <h3>Photo de plaque</h3>
             <div style={{ marginTop: 6 }}>
               <img src="/plaque-pickup.jpg" alt="Plaque essai" style={{ width: '100%', borderRadius: 8, border: '1px solid var(--border)' }} />
             </div>
           </div>
-          {/* Row 3: Analyse IA (right) */}
           <div className="panel">
             <h3>Analyse IA</h3>
             <div className="muted">Résultats simulés: couverture homogène, porosité dans l'intervalle attendu. (Module démo)</div>
           </div>
         </div>
       )}
-
-      {/* Row 5: Dosage H2O historique + Contrôle doseuse H2O */}
+      {/* Row 5: H2O dosage history and control */}
       <div className="section" style={{ marginTop: 12 }}>
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Dosage H2O — Historique (L/h)</h3>
-            <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${doseRange===r?'active':''}`} onClick={() => { setDoseRange(r); setDoseEndTs(resetAnchorNow()); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
-              ))}
-            </div>
+            <h3>Débit H₂O — Historique (L/h)</h3>
           </div>
-          <div className="chart" ref={doseRef} style={{ position: 'relative' }}>
+          <div className="chart" style={{ height: 220 }}>
             <ResponsiveContainer>
-              <LineChart data={doseHistData.map(p => ({ time: p.t, value: p.v }))} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <LineChart data={doseRateHistory.map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }))} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis domain={doseY as any} stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={(v)=>[`${v} L/h`, 'Débit']} />
-                <Line type="monotone" dataKey="value" stroke="#3b82f6" dot={false} strokeWidth={2} />
+                <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
+                <YAxis stroke="#6b7280" domain={[0, Math.max(0.1, Number((doseRateLph*2).toFixed(3)))]} />
+                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={(value) => [`${value} L/h`, 'Débit H₂O']} />
+                <Line type="monotone" dataKey="v" stroke="#3b82f6" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
-            <div
-              style={{ position: 'absolute', inset: 0, cursor: 'grab' }}
-              onPointerDown={(e) => {
-                const el = doseRef.current; if (!el) return;
-                const rect = el.getBoundingClientRect();
-                const startX = e.clientX; const startY = e.clientY;
-                const width = rect.width; const height = rect.height;
-                const startEnd = doseEndTs; const ms = rangeToMs(doseRange);
-                const startYDom = doseY;
-                const onMove = (ev: PointerEvent) => {
-                  const dx = ev.clientX - startX; const dy = ev.clientY - startY;
-                  const deltaMs = Math.round(dx * ms / width);
-                  setDoseEndTs(startEnd - deltaMs);
-                  if ((ev.clientX - rect.left) < 56) {
-                    const [yMin,yMax] = startYDom; const valPerPixel = (yMax - yMin) / height; const dVal = dy * valPerPixel;
-                    setDoseY([yMin - dVal, yMax - dVal]);
-                  }
-                };
-                const onUp = () => { window.removeEventListener('pointermove', onMove); };
-                window.addEventListener('pointermove', onMove);
-                window.addEventListener('pointerup', onUp, { once: true });
-              }}
-            />
           </div>
         </div>
         <div className="panel">
-          <h3>Contrôle doseuse H2O</h3>
-          <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <h3>Contrôle doseuse H₂O</h3>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
             <label>Débit (L/h)</label>
-            <input style={{ width: 100 }} type="number" step="0.001" value={doseRateLph} onChange={e => setDoseRateLph(Number(e.target.value))} />
+            <input style={{ width: 120 }} type="number" step="0.001" value={doseRateLph} onChange={(e)=> setDoseRateLph(Number(e.target.value))} />
             <span className="muted">Actuel: {doseRateLph.toFixed(3)} L/h</span>
           </div>
         </div>
