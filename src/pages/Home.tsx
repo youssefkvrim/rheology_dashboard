@@ -1,16 +1,24 @@
 import { useNavigate } from 'react-router-dom';
 import { useAppState } from '../store/appState';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 function badgeFromViscosity(v: number, low: number, high: number) {
-  if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Hors borne' };
-  if (v < low || v > high) return { cls: 'warn', label: 'Surveillance' };
+  if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Warning' };
+  if (v < low || v > high) return { cls: 'warn', label: 'Critical' };
   return { cls: 'ok', label: 'OK' };
 }
 
+function mkTooltip(unit: string, metricLabel: string) {
+  return (val: any, name: any) => {
+    const valueStr = `${val} ${unit}`.trim();
+    const label = name === 'Average' ? 'Average' : metricLabel;
+    return [valueStr, label];
+  };
+}
+
 export default function Home() {
-  const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph } = useAppState();
+  const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph, doseRateHistory } = useAppState();
   const navigate = useNavigate();
   const [showTemp, setShowTemp] = useState(false);
   const [showHumid, setShowHumid] = useState(false);
@@ -18,8 +26,8 @@ export default function Home() {
   return (
     <div>
       <h2>Accueil</h2>
-      <div className="row" style={{ gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-        <div className="card" style={{ padding: 12, minWidth: 220, maxWidth: 260, cursor: 'pointer' }} onClick={() => setShowTemp(v => !v)}>
+      <div className="grid" style={{ marginTop: 8 }}>
+        <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setShowTemp(v => !v)}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>Température salle</div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{ambient.temperatureRoom.toFixed(1)} °C</div>
@@ -27,19 +35,23 @@ export default function Home() {
           {showTemp && (
             <div style={{ height: 120, marginTop: 6 }}>
               <ResponsiveContainer>
-                <LineChart data={ambientHistory.map(p => ({ t: p.t, v: p.temp }))} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
+                  <LineChart data={(() => {
+                    const data = ambientHistory.filter(p=>p.t>=Date.now()-3*24*60*60*1000).map(p => ({ t: p.t, v: p.temp }));
+                    const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(2)) : null;
+                    return data.map(d => ({ ...d, avg: avg ?? undefined }));
+                  })()} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={(ts:any)=>new Date(Number(ts)).toLocaleTimeString()} />
-                  <YAxis stroke="#6b7280" domain={[18,30]} />
-                  <Tooltip labelFormatter={(v)=>new Date(Number(v)).toLocaleString()} formatter={(val)=>[`${val} °C`, 'Température']} />
-                  <ReferenceArea y1={22.5} y2={24.5} fill="#22c55e" fillOpacity={0.08} />
-                  <Line type="monotone" dataKey="v" stroke="#f59e0b" dot={false} strokeWidth={2} />
+                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={(ts:any)=>new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} />
+                  <YAxis stroke="#6b7280" domain={[15,30]} />
+                  <Tooltip labelFormatter={(v)=>new Date(Number(v)).toLocaleString()} formatter={mkTooltip('°C', 'Température')} />
+                  <ReferenceArea y1={21} y2={23} fill="#22c55e" fillOpacity={0.08} />
+                  <Line type="monotone" dataKey="v" name="Température" stroke="#f59e0b" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           )}
         </div>
-        <div className="card" style={{ padding: 12, minWidth: 220, maxWidth: 260, cursor: 'pointer' }} onClick={() => setShowHumid(v => !v)}>
+        <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setShowHumid(v => !v)}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>Humidité salle</div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{ambient.humidityRoom} %</div>
@@ -47,13 +59,17 @@ export default function Home() {
           {showHumid && (
             <div style={{ height: 120, marginTop: 6 }}>
               <ResponsiveContainer>
-                <LineChart data={ambientHistory.map(p => ({ t: p.t, v: p.humid }))} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
+                  <LineChart data={(() => {
+                    const data = ambientHistory.filter(p=>p.t>=Date.now()-3*24*60*60*1000).map(p => ({ t: p.t, v: p.humid }));
+                    const avg = data.length ? Math.round(data.reduce((s,d)=>s+d.v,0)/data.length) : null;
+                    return data.map(d => ({ ...d, avg: avg ?? undefined }));
+                  })()} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={(ts:any)=>new Date(Number(ts)).toLocaleTimeString()} />
-                  <YAxis stroke="#6b7280" domain={[25,90]} />
-                  <Tooltip labelFormatter={(v)=>new Date(Number(v)).toLocaleString()} formatter={(val)=>[`${val} %`, 'Humidité']} />
-                  <ReferenceArea y1={55} y2={65} fill="#22c55e" fillOpacity={0.08} />
-                  <Line type="monotone" dataKey="v" stroke="#60a5fa" dot={false} strokeWidth={2} />
+                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={(ts:any)=>new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} />
+                  <YAxis stroke="#6b7280" domain={[45,75]} />
+                  <Tooltip labelFormatter={(v)=>new Date(Number(v)).toLocaleString()} formatter={mkTooltip('%', 'Humidité')} />
+                  <ReferenceArea y1={58} y2={65} fill="#22c55e" fillOpacity={0.08} />
+                  <Line type="monotone" dataKey="v" name="Humidité" stroke="#60a5fa" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -64,11 +80,14 @@ export default function Home() {
         {[...barbotines, { id: '__new__', name: 'Ajouter une barbotine', online: false, last: null } as any].map(b => {
           const clickable = b.online && b.id === 'M7-3 006';
           const lastV = b.last?.viscosite ?? null;
-          const badgeV = lastV != null ? badgeFromViscosity(lastV, bounds.viscosite.low, bounds.viscosite.high) : null;
+          const badgeV = lastV != null && bounds.viscosite.low != null && bounds.viscosite.high != null
+            ? badgeFromViscosity(lastV, bounds.viscosite.low as number, bounds.viscosite.high as number) : null;
           const dens = b.last?.densite ?? null;
-          const badgeD = dens != null ? (dens < bounds.densite.low || dens > bounds.densite.high ? { cls: 'err', label: 'Hors borne' } : { cls: 'ok', label: 'OK' }) : null;
+          const badgeD = dens != null && bounds.densite.low != null && bounds.densite.high != null
+            ? (dens < (bounds.densite.low as number) || dens > (bounds.densite.high as number) ? { cls: 'err', label: 'Warning' } : { cls: 'ok', label: 'OK' })
+            : null;
           const pc = b.last ? (65 + Math.round(((b.last.viscosite%10)-5)*2)) : null;
-          const badgePC = pc != null ? (pc < 60 || pc > 75 ? { cls: 'warn', label: 'Surv.' } : { cls: 'ok', label: 'OK' }) : null;
+          const badgePC = pc != null ? (pc < 60 || pc > 75 ? { cls: 'warn', label: 'Critical' } : { cls: 'ok', label: 'OK' }) : null;
           return (
             <div key={b.id} className={`card card-bb`} style={{ opacity: b.online ? 1 : 0.6, cursor: 'pointer' }} onClick={() => {
               if (b.id === '__new__') {
@@ -122,10 +141,19 @@ export default function Home() {
                   {/* H2O */}
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <div className="row">
-                      <span className={`dot blue`}></span>
+                      <span className="dot blue"></span>
                       <div>Débit H₂O: <strong>{doseRateLph.toFixed(3)} L/h</strong></div>
                     </div>
-                    <span>📈</span>
+                    <img src={(() => {
+                      const now = Date.now();
+                      const last12 = doseRateHistory.filter(p=>p.t>=now-12*60*60*1000);
+                      if (last12.length>=2) {
+                        const first = last12[0].v; const last = last12[last12.length-1].v;
+                        if (last > first + 0.0005) return '/upward.svg';
+                        if (last < first - 0.0005) return '/downward.svg';
+                      }
+                      return '/constant.svg';
+                    })()} alt="trend" style={{ width: 16, height: 16 }} />
                   </div>
                 </>
               ) : (

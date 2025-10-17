@@ -29,8 +29,10 @@ export function App() {
   return (
     <div className="app">
       <nav className="nav">
-        <div className="brand" title="Safran">
-          <img src="/SAF.PA_BIG.svg" className="logo" alt="Safran" />
+        <div className="brand" title="Safran" style={{ cursor: 'pointer' }}>
+          <NavLink to="/" style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <img src="/SAF.PA_BIG.svg" className="logo" alt="Safran" />
+          </NavLink>
         </div>
         <div className="links" style={{ alignItems: 'center' }}>
           <NavLink to="/" className={({ isActive }) => isActive ? 'active' : ''}>Accueil</NavLink>

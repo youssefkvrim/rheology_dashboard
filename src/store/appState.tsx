@@ -15,7 +15,7 @@ export type Barbotine = {
   last: { densite: number; viscosite: number; ph: number; temperature: number } | null;
 };
 
-type Bounds = { low: number; high: number };
+type Bounds = { low: number | null; high: number | null };
 
 type AppState = {
   seed: number;
@@ -78,7 +78,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const rng = useMemo(() => createMulberry32(seedParam), [seedParam]);
 
   const [bounds, setBoundsState] = useState(() => {
-    const defaults = { densite: { low: 1.25, high: 1.45 }, viscosite: { low: 350, high: 550 }, ph: { low: 7.5, high: 9.0 }, temperature: { low: 18, high: 28 } };
+    const defaults = { densite: { low: 1.25 as number | null, high: 1.45 as number | null }, viscosite: { low: 350 as number | null, high: 550 as number | null }, ph: { low: 7.5 as number | null, high: 9.0 as number | null }, temperature: { low: 18 as number | null, high: 28 as number | null } };
     try {
       const raw = localStorage.getItem('bounds');
       if (raw) {
@@ -92,11 +92,30 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const now = Date.now();
   const [seriesM7, setSeriesM7] = useState<MetricsSeries>(() => initialSeries(now, { densite: 1.35, viscosite: 420, ph: 8.2, temperature: 22 }, rng));
   const [overrideLog, setOverrideLog] = useState<{ ts: number; action: string; reason: string }[]>([]);
-  const [ambient, setAmbient] = useState<{ temperatureRoom: number; humidityRoom: number }>(() => ({ temperatureRoom: 22.0, humidityRoom: 45 }));
-  const [ambientHistory, setAmbientHistory] = useState<{ t: number; temp: number; humid: number }[]>([]);
+  const [ambient, setAmbient] = useState<{ temperatureRoom: number; humidityRoom: number }>(() => ({ temperatureRoom: 22.0, humidityRoom: 60 }));
+  const [ambientHistory, setAmbientHistory] = useState<{ t: number; temp: number; humid: number }[]>(() => {
+    const now = Date.now();
+    const arr: { t: number; temp: number; humid: number }[] = [];
+    // seed last 3 days at 30 min step
+    for (let t = now - 3*24*60*60*1000; t <= now; t += 30*60*1000) {
+      const temp = 22 + (Math.sin(t/3.6e6) * 0.6) + (Math.random() * 0.2 - 0.1); // ~21.4..22.6
+      const humid = 61 + (Math.sin(t/7.2e6) * 3) + (Math.random()*2-1); // ~58..64
+      arr.push({ t, temp: Number(temp.toFixed(1)), humid: Math.round(humid) });
+    }
+    return arr;
+  });
   const [live, setLive] = useState<boolean>(() => (localStorage.getItem('live') ?? '1') === '1');
   const [doseRateLph, setDoseRateLph] = useState<number>(0.019);
-  const [doseRateHistory, setDoseRateHistory] = useState<MetricSample[]>([]);
+  const [doseRateHistory, setDoseRateHistory] = useState<MetricSample[]>(() => {
+    const now = Date.now();
+    const arr: MetricSample[] = [];
+    const sim = createMulberry32(seedParam + 555);
+    for (let t = now - 3*24*60*60*1000; t <= now; t += 10*60*1000) { // every 10 minutes across 3 days
+      const base = 0.025 + (sim() * 0.02 - 0.01); // 0.015..0.035
+      arr.push({ t, v: Number(base.toFixed(3)) });
+    }
+    return arr;
+  });
   const [coverPowerHistory, setCoverPowerHistory] = useState<MetricSample[]>(() => {
     const nowTs = Date.now();
     // 20 points sur 10 jours
@@ -156,13 +175,23 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return next;
       });
       setAmbient(prev => {
-        const t = clamp(prev.temperatureRoom + (rng() - 0.5) * 0.2, 18, 28);
-        const h = clamp(prev.humidityRoom + (rng() - 0.5) * 1.0, 25, 70);
+        const t = clamp(prev.temperatureRoom + (rng() - 0.5) * 0.08, 21, 23);
+        const h = clamp(prev.humidityRoom + (rng() - 0.5) * 0.8, 55, 70);
         const nextAmbient = { temperatureRoom: Number(t.toFixed(1)), humidityRoom: Math.round(h) };
-        setAmbientHistory(hist => [...hist.slice(-239), { t: Date.now(), temp: nextAmbient.temperatureRoom, humid: nextAmbient.humidityRoom }]);
+        const nowTs = Date.now();
+        setAmbientHistory(hist => {
+          const next = [...hist, { t: nowTs, temp: nextAmbient.temperatureRoom, humid: nextAmbient.humidityRoom }];
+          const windowStart = nowTs - 3*24*60*60*1000;
+          return next.filter(p => p.t >= windowStart);
+        });
         return nextAmbient;
       });
-      setDoseRateHistory(hist => [...hist.slice(-239), { t: Date.now(), v: doseRateLph }]);
+      setDoseRateHistory(hist => {
+        const nowTs = Date.now();
+        const next = [...hist, { t: nowTs, v: doseRateLph }];
+        const windowStart = nowTs - 30*24*60*60*1000; // retain last 30 days
+        return next.filter(p => p.t >= windowStart);
+      });
     }, 5000);
     return () => clearInterval(id);
   }, [rng, live]);

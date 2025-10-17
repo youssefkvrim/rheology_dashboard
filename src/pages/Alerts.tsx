@@ -36,10 +36,22 @@ export default function Alerts() {
   const alerts = useMemo(() => {
     const arr: { metric: string; value: number; limit: string; time: string }[] = [];
     const now = new Date().toLocaleTimeString();
-    if (last.viscosite > bounds.viscosite.high) arr.push({ metric: 'Viscosité', value: Math.round(last.viscosite), limit: `>${bounds.viscosite.high}`, time: now });
-    if (last.densite < bounds.densite.low || last.densite > bounds.densite.high) arr.push({ metric: 'Densité', value: Number(last.densite.toFixed(3)), limit: `${bounds.densite.low}–${bounds.densite.high}`, time: now });
-    if (last.ph < bounds.ph.low || last.ph > bounds.ph.high) arr.push({ metric: 'pH', value: Number(last.ph.toFixed(2)), limit: `${bounds.ph.low}–${bounds.ph.high}`, time: now });
-    if (last.temperature < bounds.temperature.low || last.temperature > bounds.temperature.high) arr.push({ metric: 'Température', value: Number(last.temperature.toFixed(1)), limit: `${bounds.temperature.low}–${bounds.temperature.high}`, time: now });
+    const inLowHigh = (v: number, low: number | null, high: number | null) => {
+      if (low == null && high == null) return true;
+      if (low == null) return v <= (high as number);
+      if (high == null) return v >= (low as number);
+      return v >= low && v <= high;
+    };
+    const fmtRange = (low: number | null, high: number | null) => {
+      if (low == null && high == null) return '—';
+      if (low == null) return `≤${high}`;
+      if (high == null) return `≥${low}`;
+      return `${low}–${high}`;
+    };
+    if (!inLowHigh(last.viscosite, bounds.viscosite.low, bounds.viscosite.high)) arr.push({ metric: 'Viscosité', value: Math.round(last.viscosite), limit: fmtRange(bounds.viscosite.low, bounds.viscosite.high), time: now });
+    if (!inLowHigh(last.densite, bounds.densite.low, bounds.densite.high)) arr.push({ metric: 'Densité', value: Number(last.densite.toFixed(3)), limit: fmtRange(bounds.densite.low, bounds.densite.high), time: now });
+    if (!inLowHigh(last.ph, bounds.ph.low, bounds.ph.high)) arr.push({ metric: 'pH', value: Number(last.ph.toFixed(2)), limit: fmtRange(bounds.ph.low, bounds.ph.high), time: now });
+    if (!inLowHigh(last.temperature, bounds.temperature.low, bounds.temperature.high)) arr.push({ metric: 'Température', value: Number(last.temperature.toFixed(1)), limit: fmtRange(bounds.temperature.low, bounds.temperature.high), time: now });
     return arr;
   }, [last, bounds]);
 
