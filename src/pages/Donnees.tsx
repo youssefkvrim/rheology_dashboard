@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAppState } from '../store/appState';
-import type { MetricKey } from '../types/domain';
+
+type MetricKey = 'densite' | 'viscosite' | 'ph' | 'temperature';
 
 function formatDate(ts: number) {
   const d = new Date(ts);

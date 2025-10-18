@@ -33,18 +33,8 @@ Front-only dashboard to supervise barbotines. Focused on clarity, fast iteration
 ```
 src/
   main.tsx            // App bootstrap: React.StrictMode, BrowserRouter, AppStateProvider
-  app/                // App shell
-    App.tsx           // nav, theme toggle, routing, footer
-  components/         // Reusable UI (to grow)
-  features/           // Feature modules (future)
-  repositories/       // Data repositories (sim, future API)
-    metricsRepo.ts    // MetricsRepository, SimMetricsRepository, NoopMetricsRepository
-  services/           // API clients (placeholders for now)
-    api.ts            // fetchMetricsSeries, fetchMetricBetween (placeholders)
-  store/
-    appState.tsx      // Global state, data simulation, selectors/utilities, exposes repo
-  types/
-    domain.ts         // MetricSample, MetricsSeries, Bounds, Barbotine, MetricKey, RangeKey
+  App.tsx             // App shell: nav, theme toggle, routing, footer
+  app.css             // Global styles: layout, components, modal, charts, theme
   pages/
     Home.tsx          // Landing: barbotine cards + ambient mini-charts
     Detail.tsx        // Chart-heavy detail for a barbotine, unified Paramètres modals
@@ -52,7 +42,8 @@ src/
     Donnees.tsx       // Data page (extension point)
     Params.tsx        // Settings (extension point)
     Login.tsx         // Simple login gate (front-only)
-  app.css             // Global styles: layout, components, modal, charts, theme
+  store/
+    appState.tsx      // Global state, data simulation, selectors/utilities
 public/               // Static assets (SVG icons, images)
 ```
 
@@ -95,7 +86,7 @@ public/               // Static assets (SVG icons, images)
 - Mulberry32 seeded via `?seed=` for deterministic series.
 - Live tick (5s) updates series and ambient; H₂O history is extended and windowed.
 
-## 6. UI Shell (`src/app/App.tsx`)
+## 6. UI Shell (`src/App.tsx`)
 - Theme toggle (light/dark) persisted in `localStorage`.
 - Brand (Safran) navigates to `/` using router link.
 - Auth front-only: a simple `authed` gate toggled by `Login`.
@@ -148,12 +139,6 @@ public/               // Static assets (SVG icons, images)
   2) In `Detail.tsx`, map source → series (`value` + computed `avg`)
   3) Reuse `renderParamsModal` with unit/avg/crit/bounds configuration
   4) Follow ordering and tooltip conventions
-
-### 10.5 Data Layer (Repositories)
-- `repositories/metricsRepo.ts` defines `MetricsRepository` to abstract data sources.
-- Default `SimMetricsRepository` wraps existing simulation (`getSeriesForRange`, `getSeriesBetween`).
-- Future `ApiMetricsRepository` will call `services/api.ts` endpoints backed by SQL.
-- `AppStateProvider` exposes `repo` in context so UI can switch data sources without refactors.
 
 ## 11. Known Limitations
 - Data is simulated (no backend). Auth is in-memory.
