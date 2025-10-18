@@ -33,17 +33,20 @@ Front-only dashboard to supervise barbotines. Focused on clarity, fast iteration
 ```
 src/
   main.tsx            // App bootstrap: React.StrictMode, BrowserRouter, AppStateProvider
-  App.tsx             // App shell: nav, theme toggle, routing, footer
-  app.css             // Global styles: layout, components, modal, charts, theme
-  pages/
-    Home.tsx          // Landing: barbotine cards + ambient mini-charts
-    Detail.tsx        // Chart-heavy detail for a barbotine, unified Paramètres modals
-    Alerts.tsx        // Alerts table + CSV import demo
-    Donnees.tsx       // Data page (extension point)
-    Params.tsx        // Settings (extension point)
-    Login.tsx         // Simple login gate (front-only)
+  app/                // App shell and runtime flags
+    App.tsx           // nav, theme toggle, routing, footer
+    flags.ts          // feature flags for progressive rollout
+  components/         // Shared UI building blocks (ParamsModal, MetricPanel, ...)
+  features/           // Future feature modules (barbotine, ambient, auth)
+  repositories/       // Data access abstractions (MetricsRepository)
+    metricsRepo.ts    // interface + SimMetricsRepository wrapping simulation
+  services/           // External service clients (API/SQL placeholders)
+    api.ts            // placeholder HTTP client
   store/
-    appState.tsx      // Global state, data simulation, selectors/utilities
+    appState.tsx      // Global state, data simulation, selectors/utilities, repo context
+  types/
+    domain.ts         // Centralized domain models
+  app.css             // Global styles: layout, components, modal, charts, theme
 public/               // Static assets (SVG icons, images)
 ```
 
@@ -57,10 +60,7 @@ public/               // Static assets (SVG icons, images)
 ## 5. State Management (`src/store/appState.tsx`)
 - Context: `AppStateProvider`, accessed with `useAppState()`.
 - Types:
-  - `MetricSample` = `{ t: number; v: number }`
-  - `MetricsSeries` = `{ densite, viscosite, ph, temperature }` (arrays of samples)
-  - `Barbotine` = `{ id, name, online, last | null }`
-  - `Bounds` = `{ low: number | null; high: number | null }`
+  - Domain models centralized in `types/domain.ts`: `MetricSample`, `MetricsSeries`, `Barbotine`, `Bounds`, `MetricKey`, `RangeKey`.
 - AppState surface:
   - `seriesM7`: metrics series (simulated), updated every 5s when `live` is true
   - `bounds`: default min/max per metric; persisted in `localStorage`
@@ -70,6 +70,7 @@ public/               // Static assets (SVG icons, images)
   - `barbotines`: list of barbotines; one online (`M7-3 006`) as demo
   - Actions: `setBounds`, `addManualSample`, `startMassTest`, `addOverride`, `applyMetricPoints`, etc.
   - Selectors: `getSeriesForRange(range, anchor)`, `getSeriesBetween(start, end)`
+  - Repository seam: `repo` exposed on context implements `MetricsRepository` (simulated by default)
 
 ### Data Simulation
 ### Bounds and Validation Policies
@@ -139,6 +140,11 @@ public/               // Static assets (SVG icons, images)
   2) In `Detail.tsx`, map source → series (`value` + computed `avg`)
   3) Reuse `renderParamsModal` with unit/avg/crit/bounds configuration
   4) Follow ordering and tooltip conventions
+
+## 10.5 Data Layer (Repositories)
+- `repositories/metricsRepo.ts` defines `MetricsRepository` to abstract data sources.
+- Default `SimMetricsRepository` wraps existing simulation selectors.
+- Future `ApiMetricsRepository` (via `services/api.ts`) will call SQL-backed endpoints.
 
 ## 11. Known Limitations
 - Data is simulated (no backend). Auth is in-memory.

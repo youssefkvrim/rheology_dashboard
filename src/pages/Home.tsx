@@ -23,6 +23,34 @@ export default function Home() {
   const [showTemp, setShowTemp] = useState(false);
   const [showHumid, setShowHumid] = useState(false);
 
+  // Memoized formatters and series for mini-charts
+  const dayTickFormatter = useMemo(() => (ts: any) => new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), []);
+  const labelDateTime = useMemo(() => (v: any) => new Date(Number(v)).toLocaleString(), []);
+  const tempChartData = useMemo(() => {
+    const now = Date.now();
+    const data = ambientHistory.filter(p => p.t >= now - 3 * 24 * 60 * 60 * 1000).map(p => ({ t: p.t, v: p.temp }));
+    const avg = data.length ? Number((data.reduce((s, d) => s + d.v, 0) / data.length).toFixed(2)) : null;
+    return data.map(d => ({ ...d, avg: avg ?? undefined }));
+  }, [ambientHistory]);
+  const humidChartData = useMemo(() => {
+    const now = Date.now();
+    const data = ambientHistory.filter(p => p.t >= now - 3 * 24 * 60 * 60 * 1000).map(p => ({ t: p.t, v: p.humid }));
+    const avg = data.length ? Math.round(data.reduce((s, d) => s + d.v, 0) / data.length) : null;
+    return data.map(d => ({ ...d, avg: avg ?? undefined }));
+  }, [ambientHistory]);
+  const tooltipTempFormatter = useMemo(() => mkTooltip('°C', 'Température'), []);
+  const tooltipHumidFormatter = useMemo(() => mkTooltip('%', 'Humidité'), []);
+  const h2oTrendIcon = useMemo(() => {
+    const now = Date.now();
+    const last12 = doseRateHistory.filter(p => p.t >= now - 12 * 60 * 60 * 1000);
+    if (last12.length >= 2) {
+      const first = last12[0].v; const last = last12[last12.length - 1].v;
+      if (last > first + 0.0005) return '/upward.svg';
+      if (last < first - 0.0005) return '/downward.svg';
+    }
+    return '/constant.svg';
+  }, [doseRateHistory]);
+
   return (
     <div>
       <h2>Accueil</h2>
@@ -35,15 +63,11 @@ export default function Home() {
           {showTemp && (
             <div style={{ height: 120, marginTop: 6 }}>
               <ResponsiveContainer>
-                  <LineChart data={(() => {
-                    const data = ambientHistory.filter(p=>p.t>=Date.now()-3*24*60*60*1000).map(p => ({ t: p.t, v: p.temp }));
-                    const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(2)) : null;
-                    return data.map(d => ({ ...d, avg: avg ?? undefined }));
-                  })()} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
+                  <LineChart data={tempChartData} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={(ts:any)=>new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} />
+                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={dayTickFormatter} />
                   <YAxis stroke="#6b7280" domain={[15,30]} />
-                  <Tooltip labelFormatter={(v)=>new Date(Number(v)).toLocaleString()} formatter={mkTooltip('°C', 'Température')} />
+                  <Tooltip labelFormatter={labelDateTime} formatter={tooltipTempFormatter} />
                   <ReferenceArea y1={21} y2={23} fill="#22c55e" fillOpacity={0.08} />
                   <Line type="monotone" dataKey="v" name="Température" stroke="#f59e0b" dot={false} strokeWidth={2} />
                 </LineChart>
@@ -59,15 +83,11 @@ export default function Home() {
           {showHumid && (
             <div style={{ height: 120, marginTop: 6 }}>
               <ResponsiveContainer>
-                  <LineChart data={(() => {
-                    const data = ambientHistory.filter(p=>p.t>=Date.now()-3*24*60*60*1000).map(p => ({ t: p.t, v: p.humid }));
-                    const avg = data.length ? Math.round(data.reduce((s,d)=>s+d.v,0)/data.length) : null;
-                    return data.map(d => ({ ...d, avg: avg ?? undefined }));
-                  })()} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
+                  <LineChart data={humidChartData} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={(ts:any)=>new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} />
+                  <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={dayTickFormatter} />
                   <YAxis stroke="#6b7280" domain={[45,75]} />
-                  <Tooltip labelFormatter={(v)=>new Date(Number(v)).toLocaleString()} formatter={mkTooltip('%', 'Humidité')} />
+                  <Tooltip labelFormatter={labelDateTime} formatter={tooltipHumidFormatter} />
                   <ReferenceArea y1={58} y2={65} fill="#22c55e" fillOpacity={0.08} />
                   <Line type="monotone" dataKey="v" name="Humidité" stroke="#60a5fa" dot={false} strokeWidth={2} />
                 </LineChart>
@@ -144,16 +164,7 @@ export default function Home() {
                       <span className="dot blue"></span>
                       <div>Débit H₂O: <strong>{doseRateLph.toFixed(3)} L/h</strong></div>
                     </div>
-                    <img src={(() => {
-                      const now = Date.now();
-                      const last12 = doseRateHistory.filter(p=>p.t>=now-12*60*60*1000);
-                      if (last12.length>=2) {
-                        const first = last12[0].v; const last = last12[last12.length-1].v;
-                        if (last > first + 0.0005) return '/upward.svg';
-                        if (last < first - 0.0005) return '/downward.svg';
-                      }
-                      return '/constant.svg';
-                    })()} alt="trend" style={{ width: 16, height: 16 }} />
+                    <img src={h2oTrendIcon} alt="trend" style={{ width: 16, height: 16 }} />
                   </div>
                 </>
               ) : (

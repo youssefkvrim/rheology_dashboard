@@ -1,21 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-
-type MetricSample = { t: number; v: number };
-type MetricsSeries = {
-  densite: MetricSample[];
-  viscosite: MetricSample[];
-  ph: MetricSample[];
-  temperature: MetricSample[];
-};
-
-export type Barbotine = {
-  id: string;
-  name: string;
-  online: boolean;
-  last: { densite: number; viscosite: number; ph: number; temperature: number } | null;
-};
-
-type Bounds = { low: number | null; high: number | null };
+import { Barbotine, Bounds, MetricSample, MetricsSeries, RangeKey } from '../types/domain';
+import { MetricsRepository, SimMetricsRepository } from '../repositories/metricsRepo';
 
 type AppState = {
   seed: number;
@@ -31,8 +16,9 @@ type AppState = {
   addManualSample: (sample: Partial<{ densite: number; viscosite: number; ph: number; temperature: number }>) => void;
   live: boolean;
   setLive: (live: boolean) => void;
-  getSeriesForRange: (range: 'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific', anchorTs?: number) => MetricsSeries;
+  getSeriesForRange: (range: RangeKey, anchorTs?: number) => MetricsSeries;
   getSeriesBetween: (startTs: number, endTs: number, stepMs?: number) => MetricsSeries;
+  repo: MetricsRepository;
   doseRateLph: number;
   setDoseRateLph: (rate: number) => void;
   doseRateHistory: MetricSample[];
@@ -243,6 +229,67 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
   };
 
+  // Shared simulated selectors to be used by both UI and the repository seam
+  const selectSeriesForRange = (range: RangeKey, anchorTs?: number): MetricsSeries => {
+    if (range === 'all') return seriesM7;
+    const nowTs = Date.now();
+    let end = Math.min(anchorTs ?? nowTs, nowTs);
+    let start = end - 3 * 60 * 60 * 1000;
+    let step = 30 * 1000;
+    if (range === '1d') { start = end - 24 * 60 * 60 * 1000; step = 10 * 60 * 1000; }
+    else if (range === '7d') { start = end - 7 * 24 * 60 * 60 * 1000; step = 60 * 60 * 1000; }
+    else if (range === '1m') { start = end - 30 * 24 * 60 * 60 * 1000; step = 6 * 60 * 60 * 1000; }
+    else if (range === '3m') { start = end - 90 * 24 * 60 * 60 * 1000; step = 12 * 60 * 60 * 1000; }
+    else if (range === '3h') { start = end - 3 * 60 * 60 * 1000; step = 30 * 1000; }
+    else if (range === 'specific' && anchorTs) { start = anchorTs; end = anchorTs + 60 * 60 * 1000; step = 60 * 1000; }
+
+    const simRng = createMulberry32(seedParam + Math.floor(start / step));
+    const generateBetween = (base: number, jitter: number, drift: number, min: number, max: number): MetricSample[] => {
+      const arr: MetricSample[] = [];
+      let current = base;
+      for (let t = start; t <= end; t += step) {
+        current = clamp(current + (simRng() - 0.5) * drift + (simRng() * 2 - 1) * jitter, min, max);
+        arr.push({ t, v: current });
+      }
+      return arr;
+    };
+
+    return {
+      densite: generateBetween(1.35, 0.02, 0.01, 1.2, 1.5),
+      viscosite: generateBetween(420, 20, 6, 250, 700),
+      ph: generateBetween(8.2, 0.05, 0.02, 6.5, 9.8),
+      temperature: generateBetween(22, 0.3, 0.1, 15, 35),
+    };
+  };
+
+  const selectSeriesBetween = (startTs: number, endTs: number, stepMs?: number): MetricsSeries => {
+    const start = Math.min(startTs, endTs);
+    const end = Math.max(startTs, endTs);
+    const desiredPoints = 240;
+    const step = stepMs || Math.max(1000, Math.floor((end - start) / desiredPoints));
+    const simRng = createMulberry32(seedParam + Math.floor(start / step));
+    const generateBetween = (base: number, jitter: number, drift: number, min: number, max: number): MetricSample[] => {
+      const arr: MetricSample[] = [];
+      let current = base;
+      for (let t = start; t <= end; t += step) {
+        current = clamp(current + (simRng() - 0.5) * drift + (simRng() * 2 - 1) * jitter, min, max);
+        arr.push({ t, v: current });
+      }
+      return arr;
+    };
+    return {
+      densite: generateBetween(1.35, 0.02, 0.01, 1.2, 1.5),
+      viscosite: generateBetween(420, 20, 6, 250, 700),
+      ph: generateBetween(8.2, 0.05, 0.02, 6.5, 9.8),
+      temperature: generateBetween(22, 0.3, 0.1, 15, 35),
+    };
+  };
+
+  const repo = useMemo(() => new SimMetricsRepository({
+    getSeriesForRange: selectSeriesForRange,
+    getSeriesBetween: selectSeriesBetween,
+  }), [seriesM7, seedParam]);
+
   const value: AppState = {
     seed: seedParam,
     barbotines,
@@ -258,60 +305,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     live,
     setLive,
     doseRateHistory,
-    getSeriesForRange: (range, anchorTs) => {
-      if (range === 'all') return seriesM7;
-      // génère une série simulée déterministe pour la période, ancrée sur anchorTs (ou maintenant)
-      const nowTs = Date.now();
-      let end = Math.min(anchorTs ?? nowTs, nowTs);
-      let start = end - 3 * 60 * 60 * 1000; // 3h par défaut
-      let step = 30 * 1000;
-      if (range === '1d') { start = end - 24 * 60 * 60 * 1000; step = 10 * 60 * 1000; }
-      else if (range === '7d') { start = end - 7 * 24 * 60 * 60 * 1000; step = 60 * 60 * 1000; }
-      else if (range === '1m') { start = end - 30 * 24 * 60 * 60 * 1000; step = 6 * 60 * 60 * 1000; }
-      else if (range === '3m') { start = end - 90 * 24 * 60 * 60 * 1000; step = 12 * 60 * 60 * 1000; }
-      else if (range === '3h') { start = end - 3 * 60 * 60 * 1000; step = 30 * 1000; }
-      else if (range === 'specific' && anchorTs) { start = anchorTs; end = anchorTs + 60 * 60 * 1000; step = 60 * 1000; }
-
-      const simRng = createMulberry32(seedParam + Math.floor(start / step));
-      const generateBetween = (base: number, jitter: number, drift: number, min: number, max: number): MetricSample[] => {
-        const arr: MetricSample[] = [];
-        let current = base;
-        for (let t = start; t <= end; t += step) {
-          current = clamp(current + (simRng() - 0.5) * drift + (simRng() * 2 - 1) * jitter, min, max);
-          arr.push({ t, v: current });
-        }
-        return arr;
-      };
-
-      return {
-        densite: generateBetween(1.35, 0.02, 0.01, 1.2, 1.5),
-        viscosite: generateBetween(420, 20, 6, 250, 700),
-        ph: generateBetween(8.2, 0.05, 0.02, 6.5, 9.8),
-        temperature: generateBetween(22, 0.3, 0.1, 15, 35),
-      };
-    },
-    getSeriesBetween: (startTs, endTs, stepMs) => {
-      const start = Math.min(startTs, endTs);
-      const end = Math.max(startTs, endTs);
-      const desiredPoints = 240;
-      const step = stepMs || Math.max(1000, Math.floor((end - start) / desiredPoints));
-      const simRng = createMulberry32(seedParam + Math.floor(start / step));
-      const generateBetween = (base: number, jitter: number, drift: number, min: number, max: number): MetricSample[] => {
-        const arr: MetricSample[] = [];
-        let current = base;
-        for (let t = start; t <= end; t += step) {
-          current = clamp(current + (simRng() - 0.5) * drift + (simRng() * 2 - 1) * jitter, min, max);
-          arr.push({ t, v: current });
-        }
-        return arr;
-      };
-      return {
-        densite: generateBetween(1.35, 0.02, 0.01, 1.2, 1.5),
-        viscosite: generateBetween(420, 20, 6, 250, 700),
-        ph: generateBetween(8.2, 0.05, 0.02, 6.5, 9.8),
-        temperature: generateBetween(22, 0.3, 0.1, 15, 35),
-      };
-    },
+    getSeriesForRange: selectSeriesForRange,
+    getSeriesBetween: selectSeriesBetween,
     doseRateLph,
     setDoseRateLph: (r: number) => setDoseRateLph(Math.max(0, Number(r.toFixed(3)))),
     coverPowerHistory,
@@ -327,7 +322,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const merged = Array.from(map.entries()).sort((a,b)=>a[0]-b[0]).map(([t,v]) => ({ t, v }));
         return { ...prev, [key]: merged } as MetricsSeries;
       });
-    }
+    },
+    repo,
   };
 
   return (
