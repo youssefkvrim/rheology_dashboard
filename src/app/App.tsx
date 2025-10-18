@@ -5,6 +5,7 @@ import Detail from '../pages/Detail';
 import Donnees from '../pages/Donnees';
 import Params from '../pages/Params';
 import Login from '../pages/Login';
+import Reset from '../pages/Reset';
 import '../app.css';
 
 export function App() {
@@ -18,12 +19,21 @@ export function App() {
     return () => document.removeEventListener('click', close);
   }, [theme]);
 
-  const [authed, setAuthed] = useState<boolean>(false);
+  const [authed, setAuthed] = useState<boolean>(() => sessionStorage.getItem('authed') === '1');
   const onLogin = () => { setAuthed(true); sessionStorage.setItem('authed', '1'); };
   const onLogout = () => { setAuthed(false); sessionStorage.removeItem('authed'); };
 
   if (!authed) {
-    return <Login onLogin={onLogin} />;
+    return (
+      <div className="app">
+        <main className="content" style={{ maxWidth: 640, margin: '0 auto' }}>
+          <Routes>
+            <Route path="/reset" element={<Reset />} />
+            <Route path="*" element={<Login onLogin={onLogin} />} />
+          </Routes>
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -69,6 +79,7 @@ export function App() {
           <Route path="/barbotine/:id" element={<Detail />} />
           <Route path="/donnees" element={<Donnees />} />
           <Route path="/params" element={<Params />} />
+          <Route path="/reset" element={<Reset />} />
         </Routes>
       </main>
       <footer className="footer">
