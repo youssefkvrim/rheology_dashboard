@@ -1,0 +1,124 @@
+# PROJECT_OVERVIEW
+
+Source of truth for architecture, responsibilities, and key flows.
+
+## 1. Vision
+Front-only dashboard to supervise barbotines. Focused on clarity, fast iteration, and consistent UX across charts. Data is simulated deterministically, enabling demos without backend.
+
+## 2. Tech Stack
+- Vite + React + TypeScript
+- React Router (navigation)
+- Recharts (charts)
+- CSS variables (themes), minimal custom CSS in `src/app.css`
+
+## 3. High-Level Structure
+```
+src/
+  main.tsx            // App bootstrap: React.StrictMode, BrowserRouter, AppStateProvider
+  App.tsx             // App shell: nav, theme toggle, routing, footer
+  app.css             // Global styles: layout, components, modal, charts, theme
+  pages/
+    Home.tsx          // Landing: barbotine cards + ambient mini-charts
+    Detail.tsx        // Chart-heavy detail for a barbotine, unified Paramètres modals
+    Alerts.tsx        // Alerts table + CSV import demo
+    Donnees.tsx       // Data page (extension point)
+    Params.tsx        // Settings (extension point)
+    Login.tsx         // Simple login gate (front-only)
+  store/
+    appState.tsx      // Global state, data simulation, selectors/utilities
+public/               // Static assets (SVG icons, images)
+```
+
+## 4. Routing
+- Defined in `App.tsx`:
+  - `/` → `Home`
+  - `/barbotine/:id` → `Detail`
+  - `/donnees` → `Donnees`
+  - `/params` → `Params`
+
+## 5. State Management (`src/store/appState.tsx`)
+- Context: `AppStateProvider`, accessed with `useAppState()`.
+- Types:
+  - `MetricSample` = `{ t: number; v: number }`
+  - `MetricsSeries` = `{ densite, viscosite, ph, temperature }` (arrays of samples)
+  - `Barbotine` = `{ id, name, online, last | null }`
+  - `Bounds` = `{ low: number | null; high: number | null }`
+- AppState surface:
+  - `seriesM7`: metrics series (simulated), updated every 5s when `live` is true
+  - `bounds`: default min/max per metric; persisted in `localStorage`
+  - `ambient`, `ambientHistory`: room temperature (%) and humidity (%)
+  - `doseRateLph`, `doseRateHistory`: H₂O dosing rate (current + history)
+  - `coverPowerHistory`: historical covering power (g)
+  - `barbotines`: list of barbotines; one online (`M7-3 006`) as demo
+  - Actions: `setBounds`, `addManualSample`, `startMassTest`, `addOverride`, `applyMetricPoints`, etc.
+  - Selectors: `getSeriesForRange(range, anchor)`, `getSeriesBetween(start, end)`
+
+### Data Simulation
+- Mulberry32 seeded via `?seed=` for deterministic series.
+- Live tick (5s) updates series and ambient; H₂O history is extended and windowed.
+
+## 6. UI Shell (`src/App.tsx`)
+- Theme toggle (light/dark) persisted in `localStorage`.
+- Brand (Safran) navigates to `/` using router link.
+- Auth front-only: a simple `authed` gate toggled by `Login`.
+- Footer informative line (no top border).
+
+## 7. Pages
+
+### Home (`src/pages/Home.tsx`)
+- Grid of cards:
+  - Ambient: Température salle (Y [15,30]) et Humidité salle (Y [45,75]); X en `DD/MM`; pas de moyenne.
+  - Barbotines: pastille à gauche, libellés et badges à droite, flèche tendance H₂O à droite.
+- Navigation to detail when a barbotine is clickable.
+
+### Detail (`src/pages/Detail.tsx`)
+- Charts: Densité, Viscosité, Température, pH, Pouvoir couvrant (historique), Essai Masse, Débit H₂O, Silice (%), Grains (%).
+- Interactions:
+  - Pan horizontal par drag (layer transparent), ajustement vertical par drag.
+  - Tooltips unifiés: `date`, `Valeur`, `Average`.
+  - Moyenne: ligne pointillée rouge, activable.
+  - Zones critiques: plages colorées réglées par pourcentage (crit %) autour des bornes.
+  - Périodes: 3H/1D/7D/1M/3M/ALL + Période personnalisée (Début/Fin, validation Fin > Début).
+- Paramètres unifiés (fonction `renderParamsModal`):
+  - Période personnalisée (Début/Fin)
+  - Conformité min/max avec saisie unique possible (si min seul → max=999 ; si max seul → min=0)
+  - Unité (affichage tooltip)
+  - Moyenne (toggle)
+  - Zones critiques (%) (toggle + slider)
+- Images:
+  - Aperçu modal fermable par clic extérieur + lien « Ouvrir dans un nouvel onglet ».
+
+### Alerts (`src/pages/Alerts.tsx`)
+- Liste d’alertes déterminée par `bounds` (supporte bornes nulles, ≥/≤ si borne unique).
+- Import CSV (format `timestamp,value` ou `ISO,value`) → scatter.
+
+## 8. Charts Conventions
+- Libraries: Recharts (`LineChart`, `ScatterChart`).
+- Order: render primary value series before average; tooltips: (date, value, Average).
+- Average series: dashed red line, isAnimationActive=false.
+- Axis X: time scale; `Home` ambient mini-charts format `DD/MM`.
+
+## 9. Styling (`src/app.css`)
+- CSS vars for `--bg`, `--panel`, `--border`, `--muted`, `--text`, `--accent`, `--grid`.
+- Layout classes: `.grid`, `.row`, `.panel`, `.card`, `.badge`, `.chart`, `.segmented`.
+- Modal: `.modal-backdrop`, `.modal`, `.modal-header`, `.modal-body`.
+- Switches: `.switch`, `.glass-switch` variants.
+
+## 10. Extensibility
+- New metric:
+  1) Add to `MetricsSeries`, default bounds in provider, and generators
+  2) In `Detail.tsx`, map source → series (`value` + computed `avg`)
+  3) Reuse `renderParamsModal` with unit/avg/crit/bounds configuration
+  4) Follow ordering and tooltip conventions
+
+## 11. Known Limitations
+- Data is simulated (no backend). Auth is in-memory.
+- Import CSV is non-persistent.
+- Silice/Grains panels show axes only until real data is wired.
+
+## 12. Developer Notes
+- Keep primary series first, average second to avoid tooltip duplication.
+- Always validate custom periods; guard against `Fin <= Début`.
+- For single-bound inputs, auto-complete missing bound (min→0, max→999) to keep zones meaningful.
+
+
