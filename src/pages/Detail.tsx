@@ -326,6 +326,10 @@ export default function Detail() {
               high={bounds.densite.high}
               setLow={(n)=> setBounds('densite', { ...bounds.densite, low: n })}
               setHigh={(n)=> setBounds('densite', { ...bounds.densite, high: n })}
+              critOn={densCritOn}
+              setCritOn={setDensCritOn}
+              critPct={densCritPct}
+              setCritPct={setDensCritPct}
               onClose={()=> setShowMenu(null)}
             />
           )}
@@ -431,6 +435,10 @@ export default function Detail() {
               high={bounds.viscosite.high}
               setLow={(n)=> setBounds('viscosite', { ...bounds.viscosite, low: n })}
               setHigh={(n)=> setBounds('viscosite', { ...bounds.viscosite, high: n })}
+              critOn={viscCritOn}
+              setCritOn={setViscCritOn}
+              critPct={viscCritPct}
+              setCritPct={setViscCritPct}
               onClose={()=> setShowMenu(null)}
             />
           )}
@@ -549,6 +557,10 @@ export default function Detail() {
              high={pcBounds.high}
              setLow={(n)=> setPcBounds(prev => ({ ...prev, low: n }))}
              setHigh={(n)=> setPcBounds(prev => ({ ...prev, high: n }))}
+             critOn={pcCritOn}
+             setCritOn={setPcCritOn}
+             critPct={pcCritPct}
+             setCritPct={setPcCritPct}
              onClose={()=> setShowMenu(null)}
            />
          )}
@@ -718,6 +730,10 @@ export default function Detail() {
               high={bounds.temperature.high}
               setLow={(n)=> setBounds('temperature', { ...bounds.temperature, low: n })}
               setHigh={(n)=> setBounds('temperature', { ...bounds.temperature, high: n })}
+              critOn={tempCritOn}
+              setCritOn={setTempCritOn}
+              critPct={tempCritPct}
+              setCritPct={setTempCritPct}
               onClose={()=> setShowMenu(null)}
             />
           )}
@@ -820,6 +836,10 @@ export default function Detail() {
               high={bounds.ph.high}
               setLow={(n)=> setBounds('ph', { ...bounds.ph, low: n })}
               setHigh={(n)=> setBounds('ph', { ...bounds.ph, high: n })}
+              critOn={phCritOn}
+              setCritOn={setPhCritOn}
+              critPct={phCritPct}
+              setCritPct={setPhCritPct}
               onClose={()=> setShowMenu(null)}
             />
           )}
@@ -964,6 +984,10 @@ export default function Detail() {
               high={siliceBounds.high}
               setLow={(n)=> setSiliceBounds(prev => ({ ...prev, low: n }))}
               setHigh={(n)=> setSiliceBounds(prev => ({ ...prev, high: n }))}
+              critOn={siliceCritOn}
+              setCritOn={setSiliceCritOn}
+              critPct={siliceCritPct}
+              setCritPct={setSiliceCritPct}
               onClose={()=> setShowMenu(null)}
             />
           )}
@@ -1013,6 +1037,10 @@ export default function Detail() {
               high={grainsBounds.high}
               setLow={(n)=> setGrainsBounds(prev => ({ ...prev, low: n }))}
               setHigh={(n)=> setGrainsBounds(prev => ({ ...prev, high: n }))}
+              critOn={grainsCritOn}
+              setCritOn={setGrainsCritOn}
+              critPct={grainsCritPct}
+              setCritPct={setGrainsCritPct}
               onClose={()=> setShowMenu(null)}
             />
           )}

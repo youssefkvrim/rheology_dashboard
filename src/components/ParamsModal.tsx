@@ -22,6 +22,11 @@ export type ParamsModalProps = {
   high: number | null;
   setLow: (n: number | null) => void;
   setHigh: (n: number | null) => void;
+  // Optional critical zones controls
+  critOn?: boolean;
+  setCritOn?: (v: boolean) => void;
+  critPct?: number;
+  setCritPct?: (n: number) => void;
   onClose: () => void;
 };
 
@@ -96,6 +101,14 @@ export function ParamsModal(p: ParamsModalProps) {
             <label>Ligne de tendance</label>
             <input type="checkbox" checked={p.trendOn} onChange={e=>p.setTrendOn(e.target.checked)} />
           </div>
+          {p.setCritOn && p.setCritPct && (
+            <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <label>Zones critiques (%)</label>
+              <input type="checkbox" checked={!!p.critOn} onChange={e=>p.setCritOn!(e.target.checked)} />
+              <input type="range" min={0} max={60} step={5} value={p.critPct ?? 30} onChange={e=>p.setCritPct!(Number(e.target.value))} />
+              <span className="muted">{p.critPct ?? 30}%</span>
+            </div>
+          )}
           {p.trendOn && p.setTrendWindowMs && (
             <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
               <label>Fenêtre tendance</label>
