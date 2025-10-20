@@ -1,40 +1,49 @@
 import { useState } from 'react';
-import { authenticate, requestPasswordReset } from '../services/api';
+import { authenticateUser, requestPasswordRecovery } from '../services/api';
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
-  const [email, setEmail] = useState('');
+  const [user, setUser] = useState('');
   const [pass, setPass] = useState('');
-  const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
-  const [info, setInfo] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const inputBaseStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', height: 40 };
 
   return (
     <div style={{ display: 'grid', placeItems: 'center', height: '70vh' }}>
       <div className="panel" style={{ width: 360 }}>
         <h2>Connexion requise</h2>
-        <p className="muted">Veuillez saisir vos identifiants Safran.</p>
+        <p className="muted">Veuillez saisir vos identifiants.</p>
         <div style={{ display: 'grid', gap: 8 }}>
-          <input placeholder="Email professionnel" type="email" value={email} onChange={e => setEmail(e.target.value)} />
-          <div className="row" style={{ gap: 8 }}>
-            <input placeholder="Mot de passe" type={show ? 'text' : 'password'} value={pass} onChange={e => setPass(e.target.value)} style={{ flex: 1 }} />
-            <button className="icon-btn" title={show ? 'Masquer' : 'Afficher'} onClick={() => setShow(v => !v)}>{show ? '🙈' : '👁️'}</button>
+          <input placeholder="Nom d'utilisateur ou email" value={user} onChange={e => setUser(e.target.value)} style={inputBaseStyle} />
+          <div style={{ position: 'relative' }}>
+            <input placeholder="Mot de passe" type={showPass ? 'text' : 'password'} value={pass} onChange={e => setPass(e.target.value)} style={{ ...inputBaseStyle, paddingRight: 40 }} />
+            <button aria-label={showPass ? 'Masquer mot de passe' : 'Voir mot de passe'} onClick={() => setShowPass(v => !v)} style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
+              <img src={showPass ? '/password_shown.svg' : '/password_hidden.svg'} alt="toggle" style={{ width: 20, height: 20, opacity: 0.8 }} />
+            </button>
           </div>
           {err && <div className="badge err">{err}</div>}
-          {info && <div className="badge ok">{info}</div>}
-          <button onClick={async () => {
-            setErr(''); setInfo('');
-            const res = await authenticate(email.trim().toLowerCase(), pass);
-            if (!res.ok) { setErr('Identifiants invalides'); return; }
-            sessionStorage.setItem('authed', '1');
-            sessionStorage.setItem('auth_email', email.trim().toLowerCase());
-            onLogin();
+          <button disabled={busy} onClick={async () => {
+            setErr(''); setBusy(true);
+            try {
+              const res = await authenticateUser(user, pass);
+              if (!res.ok) { setErr('Identifiants invalides'); return; }
+              onLogin();
+            } finally {
+              setBusy(false);
+            }
           }}>Se connecter</button>
-          <button className="link" onClick={async () => {
-            setErr(''); setInfo('');
-            const res = await requestPasswordReset(email.trim().toLowerCase());
-            if (!res.ok) { setErr('Email invalide (domaine @safrangroup.com requis)'); return; }
-            setInfo('Email de réinitialisation envoyé (demo). Vérifiez votre boite.');
-          }}>Mot de passe oublié ?</button>
+          <button className="link" disabled={busy} onClick={async () => {
+            setErr(''); setBusy(true);
+            try {
+              const r = await requestPasswordRecovery(user || 'youssef.karim@safrangroup.com');
+              if (!r.ok) { setErr(r.reason || 'Impossible de lancer la récupération'); return; }
+              // Simulation only: show confirmation; real email requires backend mail service
+              alert(`Un email de réinitialisation a été envoyé à: ${r.to}`);
+            } finally {
+              setBusy(false);
+            }
+          }} style={{ textAlign: 'center' }}>J'ai perdu mon mot de passe</button>
         </div>
       </div>
     </div>

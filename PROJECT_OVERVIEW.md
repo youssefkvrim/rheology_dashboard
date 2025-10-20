@@ -75,9 +75,11 @@ public/               // Static assets (SVG icons, images)
 ### Data Simulation
 ### Bounds and Validation Policies
 - Bounds (`low`/`high`) are nullable; comparisons handle missing sides.
+- Decimal inputs accept both comma and dot as separator in UI.
 - UI parameter modal allows entering only `min` or only `max`:
-  - Only `min` → `max` defaults to `999`
-  - Only `max` → `min` defaults to `0`
+  - Only `min` → `max` virtually defaults to `999.999` (not displayed)
+  - Only `max` → `min` virtually defaults to `0` (not displayed)
+- Charts shade ranges using virtual defaults; storage keeps only user-provided sides.
 - Alerts compute ≥/≤ checks accordingly; ranges are rendered as `≤X`, `≥Y`, or `Y–X`.
 
 ### Locale & Time Policy

@@ -2,6 +2,10 @@ import { useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAppState } from '../store/appState';
 import { Line, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts';
+import { useChartParams } from '../store/chartParams';
+import { ParamsModal } from '../components/ParamsModal';
+import { MetricPanel } from '../components/MetricPanel';
+import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
 
 function formatTime(ts: number) {
   const d = new Date(ts); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
@@ -31,6 +35,7 @@ function niceCeilMax(maxVal: number, step: number): number {
 export default function Detail() {
   const { id } = useParams();
   const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, live, setLive, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory } = useAppState();
+  const { params, setParams } = useChartParams();
   const [massSeries, setMassSeries] = useState<{ t: number; v: number }[] | null>(null);
   const [testState, setTestState] = useState<'idle' | 'calib' | 'trempe' | 'egouttage' | 'mesure' | 'termine'>('idle');
   const [remaining, setRemaining] = useState<number>(0);
@@ -122,6 +127,37 @@ export default function Detail() {
   const tempSeries = useMemo(()=> tempData.map(d=>({ ...d, avg: tempAvg ?? undefined })), [tempData, tempAvg]);
   const phAvg = useMemo(() => phData.length ? Number((phData.reduce((s,d)=>s+d.value,0)/phData.length).toFixed(2)) : null, [phData]);
   const phSeries = useMemo(()=> phData.map(d=>({ ...d, avg: phAvg ?? undefined })), [phData, phAvg]);
+
+  // Unit conversions for panels (target units come from chart params context)
+  const densConv = useMemo(() => densConverters(params.densite.unit), [params.densite.unit]);
+  const densPanelData = useMemo(() => densSeries.map(d => ({ t: d.time, v: densConv.to(d.value), avg: d.avg != null ? densConv.to(d.avg) : undefined })), [densSeries, densConv]);
+  const densYConv = useMemo(() => [densConv.to(densY[0]), densConv.to(densY[1])] as [number, number], [densY, densConv]);
+  const densBoundsConv = useMemo(() => ({ low: bounds.densite.low==null?null:densConv.to(bounds.densite.low as number), high: bounds.densite.high==null?null:densConv.to(bounds.densite.high as number) }), [bounds.densite, densConv]);
+
+  const viscConv = useMemo(() => viscConverters(params.viscosite.unit), [params.viscosite.unit]);
+  const viscPanelData = useMemo(() => viscSeries.map(d => ({ t: d.time, v: viscConv.to(d.value), avg: d.avg != null ? viscConv.to(d.avg) : undefined })), [viscSeries, viscConv]);
+  const viscYConv = useMemo(() => [viscConv.to(viscY[0]), viscConv.to(viscY[1])] as [number, number], [viscY, viscConv]);
+  const viscBoundsConv = useMemo(() => ({ low: bounds.viscosite.low==null?null:viscConv.to(bounds.viscosite.low as number), high: bounds.viscosite.high==null?null:viscConv.to(bounds.viscosite.high as number) }), [bounds.viscosite, viscConv]);
+
+  const tempConv = useMemo(() => tempConverters(params.temperature.unit), [params.temperature.unit]);
+  const tempPanelData = useMemo(() => tempSeries.map(d => ({ t: d.time, v: tempConv.to(d.value), avg: d.avg != null ? tempConv.to(d.avg) : undefined })), [tempSeries, tempConv]);
+  const tempYConv = useMemo(() => [tempConv.to(tempY[0]), tempConv.to(tempY[1])] as [number, number], [tempY, tempConv]);
+  const tempBoundsConv = useMemo(() => ({ low: bounds.temperature.low==null?null:tempConv.to(bounds.temperature.low as number), high: bounds.temperature.high==null?null:tempConv.to(bounds.temperature.high as number) }), [bounds.temperature, tempConv]);
+
+  const phPanelData = useMemo(() => phSeries.map(d => ({ t: d.time, v: d.value, avg: d.avg })), [phSeries]);
+  const h2oConv = useMemo(() => h2oConverters(params.h2o.unit), [params.h2o.unit]);
+  const h2oPanelData = useMemo(() => {
+    const now = Date.now();
+    let start = now - 3*60*60*1000;
+    if (h2oRange==='7d') start = now - 7*24*60*60*1000; else if (h2oRange==='3m') start = now - 90*24*60*60*1000; else if (h2oRange==='all') start = 0;
+    const data = doseRateHistory.filter(p=>p.t>=start).map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }));
+    const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3)) : null;
+    return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: avg != null ? h2oConv.to(avg) : undefined }));
+  }, [doseRateHistory, h2oRange, h2oConv]);
+  const h2oYConv = useMemo(() => [h2oConv.to(0), h2oConv.to(0.05)] as [number, number], [h2oConv]);
+  const h2oBoundsConv = useMemo(() => ({ low: h2oBounds.low==null?null:h2oConv.to(h2oBounds.low as number), high: h2oBounds.high==null?null:h2oConv.to(h2oBounds.high as number) }), [h2oBounds, h2oConv]);
+
+  const pcConv = useMemo(() => pcConverters(params.pc.unit), [params.pc.unit]);
   const pcHistData = useMemo(() => {
     const now = Date.now();
     if (pcRange === 'specific') {
@@ -131,6 +167,10 @@ export default function Detail() {
     const start = now - ms;
     return coverPowerHistory.filter(p => p.t >= start);
   }, [coverPowerHistory, pcRange, specStart, specEnd]);
+  const pcPanelData = useMemo(() => {
+    const avg = pcHistData.length ? Number((pcHistData.reduce((s,d)=>s+d.v,0)/pcHistData.length).toFixed(3)) : null;
+    return pcHistData.map(d => ({ t: d.t, v: pcConv.to(d.v), avg: avg != null ? pcConv.to(avg) : undefined }));
+  }, [pcHistData, pcConv]);
 
   const pcYStats = useMemo(() => {
     if (!pcHistData.length) return { min: 0, max: 0 };
@@ -196,9 +236,9 @@ export default function Detail() {
             <div className="row" style={{ gap: 8 }}>
               <label>Conformité min/max:</label>
               <input type="text" inputMode="decimal" placeholder="min" style={{ width: 90 }} value={draft[`${cfg.draftKey}.low`] ?? (cfg.low ?? '')}
-                onChange={e => { setDraft(prev => ({ ...prev, [`${cfg.draftKey}.low`]: e.target.value })); const v = parseLocaleNumber(e.target.value); if (v === null) { cfg.setLow(null); } else if (!Number.isNaN(v)) { cfg.setLow(v as number); if (cfg.high == null) cfg.setHigh(999); } }} />
+                onChange={e => { setDraft(prev => ({ ...prev, [`${cfg.draftKey}.low`]: e.target.value })); const v = parseLocaleNumber(e.target.value); if (v === null) { cfg.setLow(null); } else if (!Number.isNaN(v)) { cfg.setLow(v as number); } }} />
               <input type="text" inputMode="decimal" placeholder="max" style={{ width: 90 }} value={draft[`${cfg.draftKey}.high`] ?? (cfg.high ?? '')}
-                onChange={e => { setDraft(prev => ({ ...prev, [`${cfg.draftKey}.high`]: e.target.value })); const v = parseLocaleNumber(e.target.value); if (v === null) { cfg.setHigh(null); } else if (!Number.isNaN(v)) { cfg.setHigh(v as number); if (cfg.low == null) cfg.setLow(0); } }} />
+                onChange={e => { setDraft(prev => ({ ...prev, [`${cfg.draftKey}.high`]: e.target.value })); const v = parseLocaleNumber(e.target.value); if (v === null) { cfg.setHigh(null); } else if (!Number.isNaN(v)) { cfg.setHigh(v as number); } }} />
             </div>
             <div className="row" style={{ gap: 8 }}>
               <label>Unité:</label>
@@ -265,22 +305,30 @@ export default function Detail() {
               </div>
             </div>
           </div>
-          {showMenu==='densite' && renderParamsModal('densite', 'Paramètres Densité', {
-            onClose: () => setShowMenu(null),
-            onSetRangeSpecific: () => setDensRange('specific'),
-            unit: 'g/cm³',
-            avgOn: densAvgOn,
-            setAvgOn: setDensAvgOn,
-            critOn: densCritOn,
-            setCritOn: setDensCritOn,
-            critPct: densCritPct,
-            setCritPct: setDensCritPct,
-            low: bounds.densite.low,
-            high: bounds.densite.high,
-            setLow: (n) => setBounds('densite', { ...bounds.densite, low: n }),
-            setHigh: (n) => setBounds('densite', { ...bounds.densite, high: n }),
-            draftKey: 'densite'
-          })}
+          {showMenu==='densite' && (
+            <ParamsModal
+              title="Paramètres Densité"
+              specificStart={specificStart}
+              specificEnd={specificEnd}
+              setSpecificStart={setSpecificStart}
+              setSpecificEnd={setSpecificEnd}
+              onSetRangeSpecific={() => setDensRange('specific')}
+              unit={params.densite.unit}
+              unitOptions={["kg/m³","g/cm³","g/mL","kg/L","g/L","mg/mL"]}
+              setUnit={(u)=> setParams('densite', { unit: u })}
+              avgOn={params.densite.avgOn}
+              setAvgOn={(v)=> setParams('densite', { avgOn: v })}
+              trendOn={params.densite.trendOn}
+              setTrendOn={(v)=> setParams('densite', { trendOn: v })}
+              deltaY={params.densite.deltaY}
+              setDeltaY={(n)=> setParams('densite', { deltaY: n })}
+              low={bounds.densite.low}
+              high={bounds.densite.high}
+              setLow={(n)=> setBounds('densite', { ...bounds.densite, low: n })}
+              setHigh={(n)=> setBounds('densite', { ...bounds.densite, high: n })}
+              onClose={()=> setShowMenu(null)}
+            />
+          )}
           <div className="chart">
             <div
               className="pan-layer"
@@ -335,39 +383,19 @@ export default function Detail() {
               onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
             />
             <ResponsiveContainer>
-              <LineChart data={densSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis domain={densY as any} stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('g/cm³', 'Densité')} />
-                <Line type="monotone" dataKey="value" stroke="#60a5fa" dot={false} strokeWidth={2} />
-                {densAvgOn && densAvg != null && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-                {(bounds.densite.low != null || bounds.densite.high != null) && (
-                  <>
-                    {!densCritOn ? (
-                      <ReferenceArea y1={bounds.densite.low == null ? 0 : bounds.densite.low as number}
-                                      y2={bounds.densite.high == null ? 999 : bounds.densite.high as number}
-                                      fill="#22c55e" fillOpacity={0.08} />
-                    ) : (
-                      (() => {
-                        const y1 = bounds.densite.low == null ? 0 : (bounds.densite.low as number);
-                        const y2 = bounds.densite.high == null ? 999 : (bounds.densite.high as number);
-                        const h = y2 - y1; const m = Math.max(0, Math.min(100, densCritPct)) / 100;
-                        const lowH = h * (m/2); const midH = h * (1 - m); const topH = h * (m/2);
-                        return (
-                          <>
-                            <ReferenceArea y1={y1} y2={y1 + lowH} fill="#fbbf24" fillOpacity={0.12} />
-                            <ReferenceArea y1={y1 + lowH} y2={y1 + lowH + midH} fill="#22c55e" fillOpacity={0.12} />
-                            <ReferenceArea y1={y2 - topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                          </>
-                        );
-                      })()
-                    )}
-                  </>
-                )}
-              </LineChart>
+              <MetricPanel
+                title="Densité"
+                unitLabel={params.densite.unit}
+                data={densPanelData}
+                yDomain={densYConv as any}
+                avgOn={params.densite.avgOn}
+                trendOn={params.densite.trendOn}
+                deltaY={params.densite.deltaY}
+                bounds={densBoundsConv as any}
+                critPct={densCritOn ? densCritPct : undefined}
+                color="#60a5fa"
+                trendWindowMs={params.densite.trendWindowMs}
+              />
             </ResponsiveContainer>
           </div>
         </div>
@@ -382,22 +410,30 @@ export default function Detail() {
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('visco')}>…</button>
             </div>
           </div>
-          {showMenu==='visco' && renderParamsModal('viscosite', 'Paramètres Viscosité', {
-            onClose: () => setShowMenu(null),
-            onSetRangeSpecific: () => setViscRange('specific'),
-            unit: 'mPa·s',
-            avgOn: viscAvgOn,
-            setAvgOn: setViscAvgOn,
-            critOn: viscCritOn,
-            setCritOn: setViscCritOn,
-            critPct: viscCritPct,
-            setCritPct: setViscCritPct,
-            low: bounds.viscosite.low,
-            high: bounds.viscosite.high,
-            setLow: (n) => setBounds('viscosite', { ...bounds.viscosite, low: n }),
-            setHigh: (n) => setBounds('viscosite', { ...bounds.viscosite, high: n }),
-            draftKey: 'viscosite'
-          })}
+          {showMenu==='visco' && (
+            <ParamsModal
+              title="Paramètres Viscosité"
+              specificStart={specificStart}
+              specificEnd={specificEnd}
+              setSpecificStart={setSpecificStart}
+              setSpecificEnd={setSpecificEnd}
+              onSetRangeSpecific={()=> setViscRange('specific')}
+              unit={params.viscosite.unit}
+              unitOptions={["Pa·s","mPa·s","cP","P","St","cSt","s"]}
+              setUnit={(u)=> setParams('viscosite', { unit: u })}
+              avgOn={params.viscosite.avgOn}
+              setAvgOn={(v)=> setParams('viscosite', { avgOn: v })}
+              trendOn={params.viscosite.trendOn}
+              setTrendOn={(v)=> setParams('viscosite', { trendOn: v })}
+              deltaY={params.viscosite.deltaY}
+              setDeltaY={(n)=> setParams('viscosite', { deltaY: n })}
+              low={bounds.viscosite.low}
+              high={bounds.viscosite.high}
+              setLow={(n)=> setBounds('viscosite', { ...bounds.viscosite, low: n })}
+              setHigh={(n)=> setBounds('viscosite', { ...bounds.viscosite, high: n })}
+              onClose={()=> setShowMenu(null)}
+            />
+          )}
           <div className="chart">
             <div
               className="pan-layer"
@@ -449,41 +485,19 @@ export default function Detail() {
               }}
               onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
             />
-            <ResponsiveContainer>
-              <LineChart data={viscSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis domain={viscY as any} stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('mPa·s', 'Viscosité')} />
-                <Line type="monotone" dataKey="value" stroke="#34d399" dot={false} strokeWidth={2} />
-                {viscAvgOn && viscAvg != null && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-                {(bounds.viscosite.low != null || bounds.viscosite.high != null) && (
-                  <>
-                    {!viscCritOn ? (
-                      <ReferenceArea y1={bounds.viscosite.low == null ? 0 : bounds.viscosite.low as number}
-                                      y2={bounds.viscosite.high == null ? 999 : bounds.viscosite.high as number}
-                                      fill="#22c55e" fillOpacity={0.08} />
-                    ) : (
-                      (() => {
-                        const y1 = bounds.viscosite.low == null ? 0 : (bounds.viscosite.low as number);
-                        const y2 = bounds.viscosite.high == null ? 999 : (bounds.viscosite.high as number);
-                        const h = y2 - y1; const m = Math.max(0, Math.min(100, viscCritPct)) / 100;
-                        const lowH = h * (m/2); const midH = h * (1 - m); const topH = h * (m/2);
-                        return (
-                          <>
-                            <ReferenceArea y1={y1} y2={y1 + lowH} fill="#fbbf24" fillOpacity={0.12} />
-                            <ReferenceArea y1={y1 + lowH} y2={y1 + lowH + midH} fill="#22c55e" fillOpacity={0.12} />
-                            <ReferenceArea y1={y2 - topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                          </>
-                        );
-                      })()
-                    )}
-                  </>
-                )}
-              </LineChart>
-            </ResponsiveContainer>
+            <MetricPanel
+              title="Viscosité"
+              unitLabel={params.viscosite.unit}
+              data={viscPanelData}
+              yDomain={viscYConv as any}
+              avgOn={params.viscosite.avgOn}
+              trendOn={params.viscosite.trendOn}
+              deltaY={params.viscosite.deltaY}
+              bounds={viscBoundsConv as any}
+              critPct={viscCritOn ? viscCritPct : undefined}
+              color="#34d399"
+              trendWindowMs={params.viscosite.trendWindowMs}
+            />
           </div>
         </div>
         {/* Row 2 left: Pouvoir couvrant - Historique */}
@@ -499,61 +513,45 @@ export default function Detail() {
           </div>
           <div className="chart">
             <ResponsiveContainer>
-              <LineChart data={(() => {
-                const avg = pcHistData.length ? Number((pcHistData.reduce((s,d)=>s+d.v,0)/pcHistData.length).toFixed(3)) : null;
-                return pcHistData.map(d=> ({ ...d, avg: avg ?? undefined }));
-              })()} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('g', 'Pouvoir couvrant')} />
-                <Line type="monotone" dataKey="v" name="Pouvoir couvrant" stroke="#38bdf8" dot={true} strokeWidth={2} />
-                {pcAvgOn && pcHistData.length>0 && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-                {(pcBounds.low != null || pcBounds.high != null) && (
-                  <>
-                    {!pcCritOn ? (
-                      <ReferenceArea y1={pcBounds.low == null ? 0 : pcBounds.low as number}
-                                      y2={pcBounds.high == null ? 999 : pcBounds.high as number}
-                                      fill="#22c55e" fillOpacity={0.08} />
-                    ) : (
-                      (() => {
-                        const y1 = pcBounds.low == null ? 0 : (pcBounds.low as number);
-                        const y2 = pcBounds.high == null ? 999 : (pcBounds.high as number);
-                        const h = y2 - y1; const m = Math.max(0, Math.min(100, pcCritPct)) / 100;
-                        const lowH = h * (m/2); const midH = h * (1 - m); const topH = h * (m/2);
-                        return (
-                          <>
-                            <ReferenceArea y1={y1} y2={y1 + lowH} fill="#fbbf24" fillOpacity={0.12} />
-                            <ReferenceArea y1={y1 + lowH} y2={y1 + lowH + midH} fill="#22c55e" fillOpacity={0.12} />
-                            <ReferenceArea y1={y2 - topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                          </>
-                        );
-                      })()
-                    )}
-                  </>
-                )}
-              </LineChart>
+              <MetricPanel
+                title="Pouvoir couvrant"
+                unitLabel={params.pc.unit}
+                data={pcPanelData}
+                avgOn={params.pc.avgOn}
+                trendOn={params.pc.trendOn}
+                deltaY={params.pc.deltaY}
+                bounds={{ low: pcBounds.low, high: pcBounds.high } as any}
+              critPct={pcCritOn ? pcCritPct : undefined}
+                color="#38bdf8"
+                trendWindowMs={params.pc.trendWindowMs}
+              />
             </ResponsiveContainer>
           </div>
         </div>
-        {showMenu==='pc-hist' && renderParamsModal('pc', 'Paramètres Pouvoir couvrant (historique)', {
-          onClose: () => setShowMenu(null),
-          onSetRangeSpecific: () => setPcRange('specific'),
-          unit: 'g',
-          avgOn: pcAvgOn,
-          setAvgOn: setPcAvgOn,
-          critOn: pcCritOn,
-          setCritOn: setPcCritOn,
-          critPct: pcCritPct,
-          setCritPct: setPcCritPct,
-          low: pcBounds.low,
-          high: pcBounds.high,
-          setLow: (n) => setPcBounds(prev => ({ ...prev, low: n })),
-          setHigh: (n) => setPcBounds(prev => ({ ...prev, high: n })),
-          draftKey: 'pc'
-        })}
+         {showMenu==='pc-hist' && (
+           <ParamsModal
+             title="Paramètres Pouvoir couvrant (historique)"
+             specificStart={specificStart}
+             specificEnd={specificEnd}
+             setSpecificStart={setSpecificStart}
+             setSpecificEnd={setSpecificEnd}
+             onSetRangeSpecific={()=> setPcRange('specific')}
+             unit={params.pc.unit}
+             unitOptions={["g","g/cm²"]}
+             setUnit={(u)=> setParams('pc', { unit: u })}
+             avgOn={params.pc.avgOn}
+             setAvgOn={(v)=> setParams('pc', { avgOn: v })}
+             trendOn={params.pc.trendOn}
+             setTrendOn={(v)=> setParams('pc', { trendOn: v })}
+             deltaY={params.pc.deltaY}
+             setDeltaY={(n)=> setParams('pc', { deltaY: n })}
+             low={pcBounds.low}
+             high={pcBounds.high}
+             setLow={(n)=> setPcBounds(prev => ({ ...prev, low: n }))}
+             setHigh={(n)=> setPcBounds(prev => ({ ...prev, high: n }))}
+             onClose={()=> setShowMenu(null)}
+           />
+         )}
         {/* Row 2 right: Pouvoir couvrant - Essai */}
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -699,22 +697,30 @@ export default function Detail() {
               </div>
             </div>
           </div>
-          {showMenu==='temp' && renderParamsModal('temperature', 'Paramètres Température', {
-            onClose: () => setShowMenu(null),
-            onSetRangeSpecific: () => setTempRange('specific'),
-            unit: '°C',
-            avgOn: tempAvgOn,
-            setAvgOn: setTempAvgOn,
-            critOn: tempCritOn,
-            setCritOn: setTempCritOn,
-            critPct: tempCritPct,
-            setCritPct: setTempCritPct,
-            low: bounds.temperature.low,
-            high: bounds.temperature.high,
-            setLow: (n) => setBounds('temperature', { ...bounds.temperature, low: n }),
-            setHigh: (n) => setBounds('temperature', { ...bounds.temperature, high: n }),
-            draftKey: 'temperature'
-          })}
+          {showMenu==='temp' && (
+            <ParamsModal
+              title="Paramètres Température"
+              specificStart={specificStart}
+              specificEnd={specificEnd}
+              setSpecificStart={setSpecificStart}
+              setSpecificEnd={setSpecificEnd}
+              onSetRangeSpecific={()=> setTempRange('specific')}
+              unit={params.temperature.unit}
+              unitOptions={["°C","°F","K"]}
+              setUnit={(u)=> setParams('temperature', { unit: u })}
+              avgOn={params.temperature.avgOn}
+              setAvgOn={(v)=> setParams('temperature', { avgOn: v })}
+              trendOn={params.temperature.trendOn}
+              setTrendOn={(v)=> setParams('temperature', { trendOn: v })}
+              deltaY={params.temperature.deltaY}
+              setDeltaY={(n)=> setParams('temperature', { deltaY: n })}
+              low={bounds.temperature.low}
+              high={bounds.temperature.high}
+              setLow={(n)=> setBounds('temperature', { ...bounds.temperature, low: n })}
+              setHigh={(n)=> setBounds('temperature', { ...bounds.temperature, high: n })}
+              onClose={()=> setShowMenu(null)}
+            />
+          )}
           <div className="chart">
             <div
               className="pan-layer"
@@ -766,41 +772,19 @@ export default function Detail() {
               }}
               onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
             />
-            <ResponsiveContainer>
-              <LineChart data={tempSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis domain={tempY as any} stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('°C', 'Température')} />
-                <Line type="monotone" dataKey="value" stroke="#f59e0b" dot={false} strokeWidth={2} />
-                {tempAvgOn && tempAvg != null && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-                {(bounds.temperature.low != null || bounds.temperature.high != null) && (
-                  <>
-                    {!tempCritOn ? (
-                      <ReferenceArea y1={bounds.temperature.low == null ? 0 : bounds.temperature.low as number}
-                                      y2={bounds.temperature.high == null ? 999 : bounds.temperature.high as number}
-                                      fill="#22c55e" fillOpacity={0.08} />
-                    ) : (
-                      (() => {
-                        const y1 = bounds.temperature.low == null ? 0 : (bounds.temperature.low as number);
-                        const y2 = bounds.temperature.high == null ? 999 : (bounds.temperature.high as number);
-                        const h = y2 - y1; const m = Math.max(0, Math.min(100, tempCritPct)) / 100;
-                        const lowH = h * (m/2); const midH = h * (1 - m); const topH = h * (m/2);
-                        return (
-                          <>
-                            <ReferenceArea y1={y1} y2={y1 + lowH} fill="#fbbf24" fillOpacity={0.12} />
-                            <ReferenceArea y1={y1 + lowH} y2={y1 + lowH + midH} fill="#22c55e" fillOpacity={0.12} />
-                            <ReferenceArea y1={y2 - topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                          </>
-                        );
-                      })()
-                    )}
-                  </>
-                )}
-              </LineChart>
-            </ResponsiveContainer>
+            <MetricPanel
+              title="Température"
+              unitLabel={params.temperature.unit}
+              data={tempPanelData}
+              yDomain={tempYConv as any}
+              avgOn={params.temperature.avgOn}
+              trendOn={params.temperature.trendOn}
+              deltaY={params.temperature.deltaY}
+              bounds={tempBoundsConv as any}
+              critPct={tempCritOn ? tempCritPct : undefined}
+              color="#f59e0b"
+              trendWindowMs={params.temperature.trendWindowMs}
+            />
           </div>
         </div>
         <div className="panel">
@@ -815,22 +799,30 @@ export default function Detail() {
               </div>
             </div>
           </div>
-          {showMenu==='ph' && renderParamsModal('ph', 'Paramètres pH', {
-            onClose: () => setShowMenu(null),
-            onSetRangeSpecific: () => setPhRange('specific'),
-            unit: '',
-            avgOn: phAvgOn,
-            setAvgOn: setPhAvgOn,
-            critOn: phCritOn,
-            setCritOn: setPhCritOn,
-            critPct: phCritPct,
-            setCritPct: setPhCritPct,
-            low: bounds.ph.low,
-            high: bounds.ph.high,
-            setLow: (n) => setBounds('ph', { ...bounds.ph, low: n }),
-            setHigh: (n) => setBounds('ph', { ...bounds.ph, high: n }),
-            draftKey: 'ph'
-          })}
+          {showMenu==='ph' && (
+            <ParamsModal
+              title="Paramètres pH"
+              specificStart={specificStart}
+              specificEnd={specificEnd}
+              setSpecificStart={setSpecificStart}
+              setSpecificEnd={setSpecificEnd}
+              onSetRangeSpecific={()=> setPhRange('specific')}
+              unit={params.ph.unit}
+              unitOptions={["(-)"]}
+              setUnit={(u)=> setParams('ph', { unit: u })}
+              avgOn={params.ph.avgOn}
+              setAvgOn={(v)=> setParams('ph', { avgOn: v })}
+              trendOn={params.ph.trendOn}
+              setTrendOn={(v)=> setParams('ph', { trendOn: v })}
+              deltaY={params.ph.deltaY}
+              setDeltaY={(n)=> setParams('ph', { deltaY: n })}
+              low={bounds.ph.low}
+              high={bounds.ph.high}
+              setLow={(n)=> setBounds('ph', { ...bounds.ph, low: n })}
+              setHigh={(n)=> setBounds('ph', { ...bounds.ph, high: n })}
+              onClose={()=> setShowMenu(null)}
+            />
+          )}
           <div className="chart">
             <div
               className="pan-layer"
@@ -882,40 +874,19 @@ export default function Detail() {
               }}
               onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
             />
-            <ResponsiveContainer>
-              <LineChart data={phSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis domain={phY as any} stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('', 'pH')} />
-                {phAvgOn && phAvg != null && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-                {(bounds.ph.low != null || bounds.ph.high != null) && (
-                  <>
-                    {!phCritOn ? (
-                      <ReferenceArea y1={bounds.ph.low == null ? 0 : bounds.ph.low as number}
-                                      y2={bounds.ph.high == null ? 999 : bounds.ph.high as number}
-                                      fill="#22c55e" fillOpacity={0.08} />
-                    ) : (
-                      (() => {
-                        const y1 = bounds.ph.low == null ? 0 : (bounds.ph.low as number);
-                        const y2 = bounds.ph.high == null ? 999 : (bounds.ph.high as number);
-                        const h = y2 - y1; const m = Math.max(0, Math.min(100, phCritPct)) / 100;
-                        const lowH = h * (m/2); const midH = h * (1 - m); const topH = h * (m/2);
-                        return (
-                          <>
-                            <ReferenceArea y1={y1} y2={y1 + lowH} fill="#fbbf24" fillOpacity={0.12} />
-                            <ReferenceArea y1={y1 + lowH} y2={y1 + lowH + midH} fill="#22c55e" fillOpacity={0.12} />
-                            <ReferenceArea y1={y2 - topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                          </>
-                        );
-                      })()
-                    )}
-                  </>
-                )}
-              </LineChart>
-            </ResponsiveContainer>
+            <MetricPanel
+              title="pH"
+              unitLabel={params.ph.unit}
+              data={phSeries.map(d=>({ t: d.time, v: d.value, avg: d.avg }))}
+              yDomain={phY as any}
+              avgOn={params.ph.avgOn}
+              trendOn={params.ph.trendOn}
+              deltaY={params.ph.deltaY}
+              bounds={{ low: bounds.ph.low, high: bounds.ph.high } as any}
+              critPct={phCritOn ? phCritPct : undefined}
+              color="#8b5cf6"
+              trendWindowMs={params.ph.trendWindowMs}
+            />
           </div>
         </div>
       </div>
@@ -933,33 +904,19 @@ export default function Detail() {
           </div>
           <div className="chart">
             <ResponsiveContainer>
-              <LineChart data={(() => {
-                const now = Date.now();
-                let start = now - 3*60*60*1000;
-                if (h2oRange==='7d') start = now - 7*24*60*60*1000; else if (h2oRange==='3m') start = now - 90*24*60*60*1000; else if (h2oRange==='all') start = 0;
-                const data = doseRateHistory.filter(p=>p.t>=start).map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }));
-                const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3)) : null;
-                return data.map(d => ({ ...d, avg: avg ?? undefined }));
-              })()} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis stroke="#6b7280" domain={[0, 0.05]} />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('L/h', 'Débit H₂O')} />
-                {h2oAvgOn && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-                {h2oCritOn && (() => {
-                  const y1 = 0.02, y2 = 0.03; const h = y2 - y1; const m = Math.max(0, Math.min(100, h2oCritPct))/100; const lowH = h*(m/2), midH=h*(1-m), topH=h*(m/2);
-                  return (
-                    <>
-                      <ReferenceArea y1={y1} y2={y1+lowH} fill="#fbbf24" fillOpacity={0.12} />
-                      <ReferenceArea y1={y1+lowH} y2={y1+lowH+midH} fill="#22c55e" fillOpacity={0.12} />
-                      <ReferenceArea y1={y2-topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                    </>
-                  );
-                })()}
-                <Line type="monotone" dataKey="v" stroke="#3b82f6" dot={false} strokeWidth={2} />
-              </LineChart>
+              <MetricPanel
+                title="Débit H₂O"
+                unitLabel={params.h2o.unit}
+                data={h2oPanelData}
+                yDomain={h2oYConv as any}
+                avgOn={params.h2o.avgOn}
+                trendOn={params.h2o.trendOn}
+                deltaY={params.h2o.deltaY}
+                bounds={h2oBoundsConv as any}
+                critPct={h2oCritOn ? h2oCritPct : undefined}
+                color="#3b82f6"
+                trendWindowMs={params.h2o.trendWindowMs}
+              />
             </ResponsiveContainer>
           </div>
         </div>
@@ -986,34 +943,42 @@ export default function Detail() {
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('silice')}>…</button>
             </div>
           </div>
-          {showMenu==='silice' && renderParamsModal('silice', 'Paramètres Silice', {
-            onClose: () => setShowMenu(null),
-            onSetRangeSpecific: () => setSiliceRange('specific'),
-            unit: '%',
-            avgOn: siliceAvgOn,
-            setAvgOn: setSiliceAvgOn,
-            critOn: siliceCritOn,
-            setCritOn: setSiliceCritOn,
-            critPct: siliceCritPct,
-            setCritPct: setSiliceCritPct,
-            low: siliceBounds.low,
-            high: siliceBounds.high,
-            setLow: (n) => setSiliceBounds(prev => ({ ...prev, low: n })),
-            setHigh: (n) => setSiliceBounds(prev => ({ ...prev, high: n })),
-            draftKey: 'silice'
-          })}
+          {showMenu==='silice' && (
+            <ParamsModal
+              title="Paramètres Silice"
+              specificStart={specificStart}
+              specificEnd={specificEnd}
+              setSpecificStart={setSpecificStart}
+              setSpecificEnd={setSpecificEnd}
+              onSetRangeSpecific={()=> setSiliceRange('specific')}
+              unit={params.silice.unit}
+              unitOptions={["%"]}
+              setUnit={(u)=> setParams('silice', { unit: u })}
+              avgOn={params.silice.avgOn}
+              setAvgOn={(v)=> setParams('silice', { avgOn: v })}
+              trendOn={params.silice.trendOn}
+              setTrendOn={(v)=> setParams('silice', { trendOn: v })}
+              deltaY={params.silice.deltaY}
+              setDeltaY={(n)=> setParams('silice', { deltaY: n })}
+              low={siliceBounds.low}
+              high={siliceBounds.high}
+              setLow={(n)=> setSiliceBounds(prev => ({ ...prev, low: n }))}
+              setHigh={(n)=> setSiliceBounds(prev => ({ ...prev, high: n }))}
+              onClose={()=> setShowMenu(null)}
+            />
+          )}
           <div className="chart">
             <ResponsiveContainer>
-              <LineChart data={[]} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('%', 'Silice')} />
-                <Line type="monotone" dataKey="value" name="Silice" stroke="#a78bfa" dot={false} strokeWidth={2} />
-                {siliceAvgOn && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-              </LineChart>
+              <MetricPanel
+                title="Silice"
+                unitLabel={params.silice.unit}
+                data={[]}
+                avgOn={params.silice.avgOn}
+                trendOn={params.silice.trendOn}
+                deltaY={params.silice.deltaY}
+                color="#a78bfa"
+                trendWindowMs={params.silice.trendWindowMs}
+              />
             </ResponsiveContainer>
           </div>
         </div>
@@ -1027,34 +992,42 @@ export default function Detail() {
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('grains')}>…</button>
             </div>
           </div>
-          {showMenu==='grains' && renderParamsModal('grains', 'Paramètres Grains', {
-            onClose: () => setShowMenu(null),
-            onSetRangeSpecific: () => setGrainsRange('specific'),
-            unit: '%',
-            avgOn: grainsAvgOn,
-            setAvgOn: setGrainsAvgOn,
-            critOn: grainsCritOn,
-            setCritOn: setGrainsCritOn,
-            critPct: grainsCritPct,
-            setCritPct: setGrainsCritPct,
-            low: grainsBounds.low,
-            high: grainsBounds.high,
-            setLow: (n) => setGrainsBounds(prev => ({ ...prev, low: n })),
-            setHigh: (n) => setGrainsBounds(prev => ({ ...prev, high: n })),
-            draftKey: 'grains'
-          })}
+          {showMenu==='grains' && (
+            <ParamsModal
+              title="Paramètres Grains"
+              specificStart={specificStart}
+              specificEnd={specificEnd}
+              setSpecificStart={setSpecificStart}
+              setSpecificEnd={setSpecificEnd}
+              onSetRangeSpecific={()=> setGrainsRange('specific')}
+              unit={params.grains.unit}
+              unitOptions={["%"]}
+              setUnit={(u)=> setParams('grains', { unit: u })}
+              avgOn={params.grains.avgOn}
+              setAvgOn={(v)=> setParams('grains', { avgOn: v })}
+              trendOn={params.grains.trendOn}
+              setTrendOn={(v)=> setParams('grains', { trendOn: v })}
+              deltaY={params.grains.deltaY}
+              setDeltaY={(n)=> setParams('grains', { deltaY: n })}
+              low={grainsBounds.low}
+              high={grainsBounds.high}
+              setLow={(n)=> setGrainsBounds(prev => ({ ...prev, low: n }))}
+              setHigh={(n)=> setGrainsBounds(prev => ({ ...prev, high: n }))}
+              onClose={()=> setShowMenu(null)}
+            />
+          )}
           <div className="chart">
             <ResponsiveContainer>
-              <LineChart data={[]} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
-                <YAxis stroke="#6b7280" />
-                <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('%', 'Grains')} />
-                <Line type="monotone" dataKey="value" name="Grains" stroke="#60a5fa" dot={false} strokeWidth={2} />
-                {grainsAvgOn && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
-              </LineChart>
+              <MetricPanel
+                title="Grains"
+                unitLabel={params.grains.unit}
+                data={[]}
+                avgOn={params.grains.avgOn}
+                trendOn={params.grains.trendOn}
+                deltaY={params.grains.deltaY}
+                color="#60a5fa"
+                trendWindowMs={params.grains.trendWindowMs}
+              />
             </ResponsiveContainer>
           </div>
         </div>
