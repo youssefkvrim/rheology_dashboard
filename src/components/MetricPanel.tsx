@@ -155,10 +155,18 @@ export function MetricPanel(p: MetricPanelProps) {
     return { trendPolyline: poly.length ? poly : null, trendMeta: meta };
   }, [p.trendOn, p.data, p.trendWindowMs, p.trendSegPct]);
 
-  // Downsample indices for error bars: only tick-aligned points (one per vertical gridline)
+  // Downsample indices for error bars: ticks + midpoints mapped to nearest data indices
   const errorBarIndexSet = useMemo(() => {
     if (!p.deltaY || !p.data.length) return new Set<number>();
     const ticks: number[] = (xAxisConfig.ticks as number[]) || [];
+    const domain = xAxisConfig.domain as [number, number];
+    const seg = xAxisConfig.segments || Math.max(1, ticks.length - 1);
+    const spacing = (domain[1] - domain[0]) / seg;
+    const targets: number[] = [];
+    // midpoints between tick i and i+1 (there are seg midpoints)
+    for (let i = 0; i < seg; i++) targets.push(Math.round(domain[0] + spacing * (i + 0.5)));
+    // include all tick positions (there are seg+1 ticks)
+    targets.push(...ticks);
     const times = p.data.map(d => d.t);
     const indexSet = new Set<number>();
     const pickClosestIndex = (ts:number) => {
@@ -166,7 +174,7 @@ export function MetricPanel(p: MetricPanelProps) {
       for (let i = 1; i < times.length; i++) { const diff = Math.abs(times[i] - ts); if (diff < bestDiff) { bestDiff = diff; bestIdx = i; } }
       return bestIdx;
     };
-    for (const ts of ticks) { const idx = pickClosestIndex(ts); indexSet.add(idx); }
+    for (const ts of targets) { const idx = pickClosestIndex(ts); indexSet.add(idx); }
     return indexSet;
   }, [p.deltaY, p.data, xAxisConfig]);
 
@@ -209,24 +217,12 @@ export function MetricPanel(p: MetricPanelProps) {
     return [lo, hi] as [number, number];
   }, [p.data]);
 
-  // Custom tooltip: anchor to nearest primary data point by hovered X; show trend classification
+  // Custom tooltip: ensure we show the primary value point, not the trend point
   const customTooltip = useMemo(() => {
     return (info: any) => {
       const { active, payload, label } = info || {};
       if (!active || !payload || !payload.length) return null;
       const ts = Number(label ?? payload[0]?.payload?.t ?? 0);
-      // Find nearest original data point to hovered X
-      let nearest = p.data && p.data.length ? p.data[0] : undefined;
-      if (p.data && p.data.length) {
-        let best = p.data[0];
-        let bestDiff = Math.abs(best.t - ts);
-        for (let i = 1; i < p.data.length; i++) {
-          const d = p.data[i];
-          const diff = Math.abs(d.t - ts);
-          if (diff < bestDiff) { best = d; bestDiff = diff; }
-        }
-        nearest = best;
-      }
       let trendLabel = '';
       if (trendMeta && trendMeta.length) {
         const seg = trendMeta.find(s => ts >= s.start && ts <= s.end) || trendMeta[trendMeta.length - 1];
@@ -237,8 +233,10 @@ export function MetricPanel(p: MetricPanelProps) {
         }
       }
       const dateStr = new Date(ts).toLocaleString();
-      const valueStr = nearest && typeof (nearest as any).v === 'number' ? `${p.title} : ${formatTick((nearest as any).v)} ${p.unitLabel}`.trim() : '';
-      const avgStr = nearest && typeof (nearest as any).avg === 'number' ? `Moyenne : ${formatTick((nearest as any).avg as number)} ${p.unitLabel}`.trim() : '';
+      const valueEntry = payload.find((e:any)=> e && e.dataKey === 'v');
+      const p0 = valueEntry?.payload || payload[0]?.payload;
+      const valueStr = p0 && typeof p0.v === 'number' ? `${p.title} : ${formatTick(p0.v)} ${p.unitLabel}`.trim() : '';
+      const avgStr = p0 && typeof p0.avg === 'number' ? `Moyenne : ${formatTick(p0.avg)} ${p.unitLabel}`.trim() : '';
       return (
         <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
           <div>{dateStr}</div>
@@ -248,7 +246,7 @@ export function MetricPanel(p: MetricPanelProps) {
         </div>
       );
     };
-  }, [p.title, p.unitLabel, p.color, trendMeta, p.data]);
+  }, [p.title, p.unitLabel, p.color, trendMeta]);
 
   return (
     <div className="chart" style={{ height: 260 }}>
@@ -289,24 +287,7 @@ export function MetricPanel(p: MetricPanelProps) {
             })()
           )}
           <Line type="monotone" dataKey="v" name={p.title} stroke={p.color || "#22c55e"} dot={false} activeDot={{ r: 3, strokeOpacity: 0, fillOpacity: 0 }} strokeWidth={2}>
-            {p.deltaY ? (
-              (() => {
-                // Exactly one ErrorBar per vertical gridline (aligned to X ticks)
-                if (!p.data.length) return null;
-                const ticks: number[] = (xAxisConfig.ticks as number[]) || [];
-                const times = p.data.map(d => d.t);
-                const pickClosest = (ts:number) => {
-                  let bestIdx = 0; let bestDiff = Math.abs(times[0] - ts);
-                  for (let i = 1; i < times.length; i++) { const diff = Math.abs(times[i] - ts); if (diff < bestDiff) { bestDiff = diff; bestIdx = i; } }
-                  return p.data[bestIdx];
-                };
-                const sampled = ticks.map(ts => {
-                  const base = pickClosest(ts);
-                  return { t: ts, v: base.v, avg: base.avg, errorY: [p.deltaY as number, p.deltaY as number] };
-                });
-                return <ErrorBar data={sampled as any} dataKey={"errorY"} width={2} stroke="#a8a29e" />;
-              })()
-            ) : null}
+            {p.deltaY ? <ErrorBar dataKey="errorY" width={2} stroke="#a8a29e" /> : null}
           </Line>
           {p.avgOn && <Line type="monotone" dataKey="avg" name="Moyenne" stroke="#ef4444" dot={false} strokeDasharray="4 4" isAnimationActive={false} />}
           {trendPolyline && <Line data={trendPolyline as any} type="monotone" dataKey="trend" name="Ligne de tendance" stroke="#111827" dot={false} strokeDasharray="10 6" isAnimationActive={false} />}

@@ -129,8 +129,20 @@ public/               // Static assets (SVG icons, images)
 - Order: render primary value series before average; tooltips: (date, value, Average).
 - Average series: dashed red line, isAnimationActive=false.
 - Axis X: time scale; `Home` ambient mini-charts format `DD/MM`.
- - Tooltip behavior (MetricPanel): tooltip anchors to the nearest primary data point to the hovered X, then classifies the current trend segment (Haussière/Baissière/Horizontale). Trend line does not interfere with hover selection.
- - Error bars (MetricPanel): when `deltaY` is set, one error bar is rendered per vertical grid line (aligned with X ticks). The Y position for each error bar is the value of the primary series at the closest data point to the tick.
+
+- Tooltip behavior:
+  - Shared hover across the X-axis (`shared=true`) to ensure all primary data points are hoverable.
+  - Custom tooltip always reads the primary series (`dataKey="v"`) and appends a trend label derived from slope of the segment containing the hovered timestamp.
+  - Trend polyline does not dictate hover anchoring; primary series remains the interaction source.
+
+- ΔY (error bars):
+  - When `deltaY > 0`, error bars render only at X-axis tick positions and at midpoints between consecutive ticks.
+  - Implementation: `withErrors` marks selected indices with `errorY=[deltaY, deltaY]`; `<ErrorBar dataKey="errorY" />` renders only where present.
+  - Cartesian grid vertical coordinates are generated from X ticks for visual alignment.
+
+- Trend segmentation (`trendSegPct`):
+  - If 100%, compute a single regression over the window; otherwise, segment the X domain into equal parts and compute per-segment regressions.
+  - Trend is rendered as a dashed polyline, not used for tooltip anchoring.
 
 ## 9. Styling (`src/app.css`)
 - CSS vars for `--bg`, `--panel`, `--border`, `--muted`, `--text`, `--accent`, `--grid`.
