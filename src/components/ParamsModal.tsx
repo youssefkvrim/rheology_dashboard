@@ -16,6 +16,8 @@ export type ParamsModalProps = {
   setTrendOn: (v: boolean) => void;
   trendWindowMs?: number;
   setTrendWindowMs?: (ms: number) => void;
+  trendSegPct?: number;
+  setTrendSegPct?: (pct: number) => void;
   deltaY: number;
   setDeltaY: (n: number) => void;
   low: number | null;
@@ -101,6 +103,13 @@ export function ParamsModal(p: ParamsModalProps) {
             <label>Ligne de tendance</label>
             <input type="checkbox" checked={p.trendOn} onChange={e=>p.setTrendOn(e.target.checked)} />
           </div>
+          {p.trendOn && p.setTrendSegPct && (
+            <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <label>Segmentation tendance (%)</label>
+              <input type="range" min={1} max={100} step={1} value={p.trendSegPct ?? 100} onChange={e=>p.setTrendSegPct!(Number(e.target.value))} />
+              <span className="muted">{p.trendSegPct ?? 100}%</span>
+            </div>
+          )}
           {p.setCritOn && p.setCritPct && (
             <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
               <label>Zones critiques (%)</label>
@@ -122,7 +131,7 @@ export function ParamsModal(p: ParamsModalProps) {
           )}
           <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
             <label>ΔY (erreur)</label>
-            <input type="number" value={p.deltaY} onChange={e=>p.setDeltaY(Number(e.target.value))} style={{ width: 120 }} />
+            <input type="number" step={1} value={p.deltaY} onChange={e=>p.setDeltaY(Number(e.target.value))} style={{ width: 120 }} />
           </div>
         </div>
       </div>

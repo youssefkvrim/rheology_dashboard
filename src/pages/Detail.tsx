@@ -75,7 +75,7 @@ export default function Detail() {
   const [h2oAvgOn, setH2oAvgOn] = useState<boolean>(true);
   const [h2oCritOn, setH2oCritOn] = useState<boolean>(true);
   const [h2oCritPct, setH2oCritPct] = useState<number>(30);
-  const [h2oRange, setH2oRange] = useState<'3h'|'7d'|'3m'|'all'>('3h');
+  const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>('3h');
   const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>({ low: null, high: null });
   // critical zones settings (pre-activated at 30%)
   const [densCritOn, setDensCritOn] = useState<boolean>(true);
@@ -148,12 +148,21 @@ export default function Detail() {
   const h2oConv = useMemo(() => h2oConverters(params.h2o.unit), [params.h2o.unit]);
   const h2oPanelData = useMemo(() => {
     const now = Date.now();
+    if (h2oRange === 'specific') {
+      const data = doseRateHistory.filter(p => p.t >= specStart && p.t <= specEnd).map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }));
+      const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3)) : null;
+      return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: avg != null ? h2oConv.to(avg) : undefined }));
+    }
     let start = now - 3*60*60*1000;
-    if (h2oRange==='7d') start = now - 7*24*60*60*1000; else if (h2oRange==='3m') start = now - 90*24*60*60*1000; else if (h2oRange==='all') start = 0;
+    if (h2oRange==='1d') start = now - 24*60*60*1000;
+    else if (h2oRange==='7d') start = now - 7*24*60*60*1000;
+    else if (h2oRange==='1m') start = now - 30*24*60*60*1000;
+    else if (h2oRange==='3m') start = now - 90*24*60*60*1000;
+    else if (h2oRange==='all') start = 0;
     const data = doseRateHistory.filter(p=>p.t>=start).map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }));
     const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3)) : null;
     return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: avg != null ? h2oConv.to(avg) : undefined }));
-  }, [doseRateHistory, h2oRange, h2oConv]);
+  }, [doseRateHistory, h2oRange, h2oConv, specStart, specEnd]);
   const h2oYConv = useMemo(() => [h2oConv.to(0), h2oConv.to(0.05)] as [number, number], [h2oConv]);
   const h2oBoundsConv = useMemo(() => ({ low: h2oBounds.low==null?null:h2oConv.to(h2oBounds.low as number), high: h2oBounds.high==null?null:h2oConv.to(h2oBounds.high as number) }), [h2oBounds, h2oConv]);
 
@@ -171,6 +180,7 @@ export default function Detail() {
     const avg = pcHistData.length ? Number((pcHistData.reduce((s,d)=>s+d.v,0)/pcHistData.length).toFixed(3)) : null;
     return pcHistData.map(d => ({ t: d.t, v: pcConv.to(d.v), avg: avg != null ? pcConv.to(avg) : undefined }));
   }, [pcHistData, pcConv]);
+  const pcBoundsConv = useMemo(() => ({ low: pcBounds.low==null?null:pcConv.to(pcBounds.low as number), high: pcBounds.high==null?null:pcConv.to(pcBounds.high as number) }), [pcBounds, pcConv]);
 
   const pcYStats = useMemo(() => {
     if (!pcHistData.length) return { min: 0, max: 0 };
@@ -274,22 +284,36 @@ export default function Detail() {
             <span className="knob" />
           </button>
         </div>
-        {showMenu==='h2o' && renderParamsModal('h2o', 'Paramètres Débit H₂O', {
-          onClose: () => setShowMenu(null),
-          onSetRangeSpecific: () => setH2oRange('3h'),
-          unit: 'L/h',
-          avgOn: h2oAvgOn,
-          setAvgOn: setH2oAvgOn,
-          critOn: h2oCritOn,
-          setCritOn: setH2oCritOn,
-          critPct: h2oCritPct,
-          setCritPct: setH2oCritPct,
-          low: h2oBounds.low,
-          high: h2oBounds.high,
-          setLow: (n) => setH2oBounds(prev=>({ ...prev, low: n })),
-          setHigh: (n) => setH2oBounds(prev=>({ ...prev, high: n })),
-          draftKey: 'h2o'
-        })}
+        {showMenu==='h2o' && (
+          <ParamsModal
+            title="Paramètres Débit H₂O"
+            specificStart={specificStart}
+            specificEnd={specificEnd}
+            setSpecificStart={setSpecificStart}
+            setSpecificEnd={setSpecificEnd}
+            onSetRangeSpecific={() => setH2oRange('specific')}
+            unit={params.h2o.unit}
+            unitOptions={["L/h","L/day","mL/min","mL/s"]}
+            setUnit={(u)=> setParams('h2o', { unit: u })}
+            avgOn={params.h2o.avgOn}
+            setAvgOn={(v)=> setParams('h2o', { avgOn: v })}
+            trendOn={params.h2o.trendOn}
+            setTrendOn={(v)=> setParams('h2o', { trendOn: v })}
+              trendSegPct={params.h2o.trendSegPct}
+              setTrendSegPct={(n)=> setParams('h2o', { trendSegPct: n })}
+            deltaY={params.h2o.deltaY}
+            setDeltaY={(n)=> setParams('h2o', { deltaY: n })}
+            low={h2oBounds.low}
+            high={h2oBounds.high}
+            setLow={(n)=> setH2oBounds(prev=>({ ...prev, low: n }))}
+            setHigh={(n)=> setH2oBounds(prev=>({ ...prev, high: n }))}
+            critOn={h2oCritOn}
+            setCritOn={setH2oCritOn}
+            critPct={h2oCritPct}
+            setCritPct={setH2oCritPct}
+            onClose={() => setShowMenu(null)}
+          />
+        )}
       </div>
       <div className="section" style={{ marginTop: 12 }}>
         {/* Row 1: Densité (left) */}
@@ -320,6 +344,8 @@ export default function Detail() {
               setAvgOn={(v)=> setParams('densite', { avgOn: v })}
               trendOn={params.densite.trendOn}
               setTrendOn={(v)=> setParams('densite', { trendOn: v })}
+              trendSegPct={params.densite.trendSegPct}
+              setTrendSegPct={(n)=> setParams('densite', { trendSegPct: n })}
               deltaY={params.densite.deltaY}
               setDeltaY={(n)=> setParams('densite', { deltaY: n })}
               low={bounds.densite.low}
@@ -394,6 +420,7 @@ export default function Detail() {
                 yDomain={densYConv as any}
                 avgOn={params.densite.avgOn}
                 trendOn={params.densite.trendOn}
+                trendSegPct={params.densite.trendSegPct}
                 deltaY={params.densite.deltaY}
                 bounds={densBoundsConv as any}
                 critPct={densCritOn ? densCritPct : undefined}
@@ -429,6 +456,8 @@ export default function Detail() {
               setAvgOn={(v)=> setParams('viscosite', { avgOn: v })}
               trendOn={params.viscosite.trendOn}
               setTrendOn={(v)=> setParams('viscosite', { trendOn: v })}
+              trendSegPct={params.viscosite.trendSegPct}
+              setTrendSegPct={(n)=> setParams('viscosite', { trendSegPct: n })}
               deltaY={params.viscosite.deltaY}
               setDeltaY={(n)=> setParams('viscosite', { deltaY: n })}
               low={bounds.viscosite.low}
@@ -500,6 +529,7 @@ export default function Detail() {
               yDomain={viscYConv as any}
               avgOn={params.viscosite.avgOn}
               trendOn={params.viscosite.trendOn}
+              trendSegPct={params.viscosite.trendSegPct}
               deltaY={params.viscosite.deltaY}
               bounds={viscBoundsConv as any}
               critPct={viscCritOn ? viscCritPct : undefined}
@@ -527,8 +557,9 @@ export default function Detail() {
                 data={pcPanelData}
                 avgOn={params.pc.avgOn}
                 trendOn={params.pc.trendOn}
+              trendSegPct={params.pc.trendSegPct}
                 deltaY={params.pc.deltaY}
-                bounds={{ low: pcBounds.low, high: pcBounds.high } as any}
+                bounds={pcBoundsConv as any}
               critPct={pcCritOn ? pcCritPct : undefined}
                 color="#38bdf8"
                 trendWindowMs={params.pc.trendWindowMs}
@@ -551,6 +582,8 @@ export default function Detail() {
              setAvgOn={(v)=> setParams('pc', { avgOn: v })}
              trendOn={params.pc.trendOn}
              setTrendOn={(v)=> setParams('pc', { trendOn: v })}
+             trendSegPct={params.pc.trendSegPct}
+             setTrendSegPct={(n)=> setParams('pc', { trendSegPct: n })}
              deltaY={params.pc.deltaY}
              setDeltaY={(n)=> setParams('pc', { deltaY: n })}
              low={pcBounds.low}
@@ -724,6 +757,8 @@ export default function Detail() {
               setAvgOn={(v)=> setParams('temperature', { avgOn: v })}
               trendOn={params.temperature.trendOn}
               setTrendOn={(v)=> setParams('temperature', { trendOn: v })}
+              trendSegPct={params.temperature.trendSegPct}
+              setTrendSegPct={(n)=> setParams('temperature', { trendSegPct: n })}
               deltaY={params.temperature.deltaY}
               setDeltaY={(n)=> setParams('temperature', { deltaY: n })}
               low={bounds.temperature.low}
@@ -795,6 +830,7 @@ export default function Detail() {
               yDomain={tempYConv as any}
               avgOn={params.temperature.avgOn}
               trendOn={params.temperature.trendOn}
+              trendSegPct={params.temperature.trendSegPct}
               deltaY={params.temperature.deltaY}
               bounds={tempBoundsConv as any}
               critPct={tempCritOn ? tempCritPct : undefined}
@@ -830,6 +866,8 @@ export default function Detail() {
               setAvgOn={(v)=> setParams('ph', { avgOn: v })}
               trendOn={params.ph.trendOn}
               setTrendOn={(v)=> setParams('ph', { trendOn: v })}
+              trendSegPct={params.ph.trendSegPct}
+              setTrendSegPct={(n)=> setParams('ph', { trendSegPct: n })}
               deltaY={params.ph.deltaY}
               setDeltaY={(n)=> setParams('ph', { deltaY: n })}
               low={bounds.ph.low}
@@ -901,6 +939,7 @@ export default function Detail() {
               yDomain={phY as any}
               avgOn={params.ph.avgOn}
               trendOn={params.ph.trendOn}
+              trendSegPct={params.ph.trendSegPct}
               deltaY={params.ph.deltaY}
               bounds={{ low: bounds.ph.low, high: bounds.ph.high } as any}
               critPct={phCritOn ? phCritPct : undefined}
@@ -916,8 +955,8 @@ export default function Detail() {
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3>Débit H₂O — Historique (L/h)</h3>
             <div className="segmented">
-              {(['3h','7d','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => setH2oRange(r)}>{r.toUpperCase()}</button>
+              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
+                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => setH2oRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('h2o')}>…</button>
             </div>
@@ -931,6 +970,7 @@ export default function Detail() {
                 yDomain={h2oYConv as any}
                 avgOn={params.h2o.avgOn}
                 trendOn={params.h2o.trendOn}
+                trendSegPct={params.h2o.trendSegPct}
                 deltaY={params.h2o.deltaY}
                 bounds={h2oBoundsConv as any}
                 critPct={h2oCritOn ? h2oCritPct : undefined}
