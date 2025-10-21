@@ -103,6 +103,13 @@ public/               // Static assets (SVG icons, images)
   - Barbotines: pastille à gauche, libellés et badges à droite, flèche tendance H₂O à droite.
 - Navigation to detail when a barbotine is clickable.
 
+- Interactions (Phase 4):
+  - Ambient cards toggled en synchronisation: cliquer sur l’un ouvre/ferme les deux, charts toujours visibles quand ouvert.
+  - « Ajouter une barbotine » utilise un dialogue custom (voir `components/BarbotineCreateDialog.tsx`) avec un seul formulaire et un écran de confirmation.
+    - Champs: nom, type (M7-3 / 2CN2 / R55 / Custom), cases à cocher métriques (toutes cochées), choix de modes.
+    - Densité/Viscosité/Température: manuel ou Rheonics x276/x277/x278. Pouvoir couvrant: manuel ou BRET a6/a7/a8.
+    - Persistance: à la confirmation, la barbotine est ajoutée et sauvegardée dans `localStorage`.
+
 ### Detail (`src/pages/Detail.tsx`)
 - Charts: Densité, Viscosité, Température, pH, Pouvoir couvrant (historique), Essai Masse, Débit H₂O, Silice (%), Grains (%).
 - Interactions:
@@ -119,6 +126,9 @@ public/               // Static assets (SVG icons, images)
   - Zones critiques (%) (toggle + slider)
 - Images:
   - Aperçu modal fermable par clic extérieur + lien « Ouvrir dans un nouvel onglet ».
+
+- Offline behavior:
+  - Les cartes hors ligne sur l’accueil sont cliquables; la page de détail s’ouvre en lecture seule avec graphiques vides et switch « Live » désactivé (étiquette « Hors ligne »).
 
 ### Alerts (`src/pages/Alerts.tsx`)
 - Liste d’alertes déterminée par `bounds` (supporte bornes nulles, ≥/≤ si borne unique).

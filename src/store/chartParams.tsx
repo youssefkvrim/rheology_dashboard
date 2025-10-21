@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 export type ChartMetricKey = 'densite' | 'viscosite' | 'temperature' | 'ph' | 'pc' | 'h2o' | 'silice' | 'grains';
 
@@ -32,7 +32,33 @@ const defaultParams: ChartParamsState = {
 };
 
 export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ children }) => {
-  const [params, setParamsState] = useState<ChartParamsState>(defaultParams);
+  const [params, setParamsState] = useState<ChartParamsState>(() => {
+    try {
+      const userId = sessionStorage.getItem('userId') || 'anonymous';
+      const raw = localStorage.getItem(`chartParams:${userId}`);
+      if (raw) return { ...defaultParams, ...(JSON.parse(raw) as ChartParamsState) };
+    } catch {}
+    return defaultParams;
+  });
+
+  useEffect(() => {
+    try {
+      const userId = sessionStorage.getItem('userId') || 'anonymous';
+      localStorage.setItem(`chartParams:${userId}`, JSON.stringify(params));
+    } catch {}
+  }, [params]);
+
+  useEffect(() => {
+    const onLogin = () => {
+      try {
+        const userId = sessionStorage.getItem('userId') || 'anonymous';
+        const raw = localStorage.getItem(`chartParams:${userId}`);
+        if (raw) setParamsState({ ...defaultParams, ...(JSON.parse(raw) as ChartParamsState) });
+      } catch {}
+    };
+    window.addEventListener('user-login', onLogin);
+    return () => window.removeEventListener('user-login', onLogin);
+  }, []);
   const value = useMemo<ChartParamsContextValue>(()=>({
     params,
     setParams: (metric, patch) => setParamsState(p => ({ ...p, [metric]: { ...p[metric], ...patch } })),

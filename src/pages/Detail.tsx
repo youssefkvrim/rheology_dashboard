@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAppState } from '../store/appState';
 import { Line, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts';
@@ -34,7 +34,7 @@ function niceCeilMax(maxVal: number, step: number): number {
 
 export default function Detail() {
   const { id } = useParams();
-  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, live, setLive, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory } = useAppState();
+  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, live, setLive, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory, barbotines } = useAppState();
   const { params, setParams } = useChartParams();
   const [massSeries, setMassSeries] = useState<{ t: number; v: number }[] | null>(null);
   const [testState, setTestState] = useState<'idle' | 'calib' | 'trempe' | 'egouttage' | 'mesure' | 'termine'>('idle');
@@ -59,7 +59,7 @@ export default function Detail() {
   // drag state
   const dragRef = useRef<{ startX: number; startY: number; startAnchor: number; startYMin: number; startYMax: number; mode: 'x' | 'y' | null } | null>(null);
   const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all' | 'specific'>('7d');
-  const [pcBounds, setPcBounds] = useState<{ low: number | null; high: number | null }>({ low: null, high: null });
+  const [pcBounds, setPcBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.pc?.low ?? null, high: bounds.pc?.high ?? null }));
   const [imageModal, setImageModal] = useState<'photo' | 'ai' | null>(null);
   const [imgScale, setImgScale] = useState<number>(1);
   const imgWrapRef = useRef<HTMLDivElement | null>(null);
@@ -76,7 +76,7 @@ export default function Detail() {
   const [h2oCritOn, setH2oCritOn] = useState<boolean>(true);
   const [h2oCritPct, setH2oCritPct] = useState<number>(30);
   const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>('3h');
-  const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>({ low: null, high: null });
+  const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.h2o.low, high: bounds.h2o.high }));
   // critical zones settings (pre-activated at 30%)
   const [densCritOn, setDensCritOn] = useState<boolean>(true);
   const [densCritPct, setDensCritPct] = useState<number>(30);
@@ -92,8 +92,8 @@ export default function Detail() {
   // Extra panels: Silice and Grains
   const [siliceRange, setSiliceRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>('3h');
   const [grainsRange, setGrainsRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>('3h');
-  const [siliceBounds, setSiliceBounds] = useState<{ low: number | null; high: number | null }>({ low: null, high: null });
-  const [grainsBounds, setGrainsBounds] = useState<{ low: number | null; high: number | null }>({ low: null, high: null });
+  const [siliceBounds, setSiliceBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.silice.low, high: bounds.silice.high }));
+  const [grainsBounds, setGrainsBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.grains.low, high: bounds.grains.high }));
   const [siliceAvgOn, setSiliceAvgOn] = useState<boolean>(true);
   const [grainsAvgOn, setGrainsAvgOn] = useState<boolean>(true);
   const [siliceCritOn, setSiliceCritOn] = useState<boolean>(true);
@@ -111,10 +111,12 @@ export default function Detail() {
     return [start, end];
   }
   const [specStart, specEnd] = getSpecificRange();
-  const densSource = densRange === 'all' ? seriesM7.densite : densRange === 'specific' ? getSeriesBetween(specStart, specEnd).densite : getSeriesForRange(densRange, densAnchor).densite;
-  const viscSource = viscRange === 'all' ? seriesM7.viscosite : viscRange === 'specific' ? getSeriesBetween(specStart, specEnd).viscosite : getSeriesForRange(viscRange, viscAnchor).viscosite;
-  const tempSource = tempRange === 'all' ? seriesM7.temperature : tempRange === 'specific' ? getSeriesBetween(specStart, specEnd).temperature : getSeriesForRange(tempRange, tempAnchor).temperature;
-  const phSource = phRange === 'all' ? seriesM7.ph : phRange === 'specific' ? getSeriesBetween(specStart, specEnd).ph : getSeriesForRange(phRange, phAnchor).ph;
+  const current = useMemo(()=> barbotines.find(b => b.id === id) || null, [barbotines, id]);
+  const isOnline = !!current?.online;
+  const densSource = isOnline ? (densRange === 'all' ? seriesM7.densite : densRange === 'specific' ? getSeriesBetween(specStart, specEnd).densite : getSeriesForRange(densRange, densAnchor).densite) : [];
+  const viscSource = isOnline ? (viscRange === 'all' ? seriesM7.viscosite : viscRange === 'specific' ? getSeriesBetween(specStart, specEnd).viscosite : getSeriesForRange(viscRange, viscAnchor).viscosite) : [];
+  const tempSource = isOnline ? (tempRange === 'all' ? seriesM7.temperature : tempRange === 'specific' ? getSeriesBetween(specStart, specEnd).temperature : getSeriesForRange(tempRange, tempAnchor).temperature) : [];
+  const phSource = isOnline ? (phRange === 'all' ? seriesM7.ph : phRange === 'specific' ? getSeriesBetween(specStart, specEnd).ph : getSeriesForRange(phRange, phAnchor).ph) : [];
   const densiteData = useMemo(() => densSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(3)) })), [densSource]);
   const viscositeData = useMemo(() => viscSource.map(p => ({ time: p.t, value: Math.round(p.v) })), [viscSource]);
   const phData = useMemo(() => phSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [phSource]);
@@ -164,7 +166,7 @@ export default function Detail() {
     return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: avg != null ? h2oConv.to(avg) : undefined }));
   }, [doseRateHistory, h2oRange, h2oConv, specStart, specEnd]);
   const h2oYConv = useMemo(() => [h2oConv.to(0), h2oConv.to(0.05)] as [number, number], [h2oConv]);
-  const h2oBoundsConv = useMemo(() => ({ low: h2oBounds.low==null?null:h2oConv.to(h2oBounds.low as number), high: h2oBounds.high==null?null:h2oConv.to(h2oBounds.high as number) }), [h2oBounds, h2oConv]);
+  const h2oBoundsConv = useMemo(() => ({ low: bounds.h2o.low==null?null:h2oConv.to(bounds.h2o.low as number), high: bounds.h2o.high==null?null:h2oConv.to(bounds.h2o.high as number) }), [bounds.h2o, h2oConv]);
 
   const pcConv = useMemo(() => pcConverters(params.pc.unit), [params.pc.unit]);
   const pcHistData = useMemo(() => {
@@ -180,7 +182,7 @@ export default function Detail() {
     const avg = pcHistData.length ? Number((pcHistData.reduce((s,d)=>s+d.v,0)/pcHistData.length).toFixed(3)) : null;
     return pcHistData.map(d => ({ t: d.t, v: pcConv.to(d.v), avg: avg != null ? pcConv.to(avg) : undefined }));
   }, [pcHistData, pcConv]);
-  const pcBoundsConv = useMemo(() => ({ low: pcBounds.low==null?null:pcConv.to(pcBounds.low as number), high: pcBounds.high==null?null:pcConv.to(pcBounds.high as number) }), [pcBounds, pcConv]);
+  const pcBoundsConv = useMemo(() => ({ low: (bounds.pc?.low==null)?null:pcConv.to(bounds.pc.low as number), high: (bounds.pc?.high==null)?null:pcConv.to(bounds.pc.high as number) }), [bounds.pc, pcConv]);
 
   const pcYStats = useMemo(() => {
     if (!pcHistData.length) return { min: 0, max: 0 };
@@ -279,8 +281,8 @@ export default function Detail() {
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>Barbotine {id}</h2>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <span className="muted">Mise à jour en direct</span>
-          <button className="switch" data-on={live} aria-label="Live" onClick={() => setLive(!live)}>
+          <span className="muted">{isOnline ? 'Mise à jour en direct' : 'Hors ligne (lecture seule)'}</span>
+          <button className="switch" data-on={isOnline && live} aria-label="Live" disabled={!isOnline} onClick={() => isOnline && setLive(!live)}>
             <span className="knob" />
           </button>
         </div>
@@ -303,10 +305,10 @@ export default function Detail() {
               setTrendSegPct={(n)=> setParams('h2o', { trendSegPct: n })}
             deltaY={params.h2o.deltaY}
             setDeltaY={(n)=> setParams('h2o', { deltaY: n })}
-            low={h2oBounds.low}
-            high={h2oBounds.high}
-            setLow={(n)=> setH2oBounds(prev=>({ ...prev, low: n }))}
-            setHigh={(n)=> setH2oBounds(prev=>({ ...prev, high: n }))}
+            low={bounds.h2o.low}
+            high={bounds.h2o.high}
+            setLow={(n)=> setBounds('h2o', { ...bounds.h2o, low: n })}
+            setHigh={(n)=> setBounds('h2o', { ...bounds.h2o, high: n })}
             critOn={h2oCritOn}
             setCritOn={setH2oCritOn}
             critPct={h2oCritPct}
@@ -586,10 +588,10 @@ export default function Detail() {
              setTrendSegPct={(n)=> setParams('pc', { trendSegPct: n })}
              deltaY={params.pc.deltaY}
              setDeltaY={(n)=> setParams('pc', { deltaY: n })}
-             low={pcBounds.low}
-             high={pcBounds.high}
-             setLow={(n)=> setPcBounds(prev => ({ ...prev, low: n }))}
-             setHigh={(n)=> setPcBounds(prev => ({ ...prev, high: n }))}
+             low={bounds.pc?.low ?? null}
+             high={bounds.pc?.high ?? null}
+             setLow={(n)=> setBounds('pc', { ...(bounds.pc ?? { low: null, high: null }), low: n })}
+             setHigh={(n)=> setBounds('pc', { ...(bounds.pc ?? { low: null, high: null }), high: n })}
              critOn={pcCritOn}
              setCritOn={setPcCritOn}
              critPct={pcCritPct}
@@ -1020,10 +1022,10 @@ export default function Detail() {
               setTrendOn={(v)=> setParams('silice', { trendOn: v })}
               deltaY={params.silice.deltaY}
               setDeltaY={(n)=> setParams('silice', { deltaY: n })}
-              low={siliceBounds.low}
-              high={siliceBounds.high}
-              setLow={(n)=> setSiliceBounds(prev => ({ ...prev, low: n }))}
-              setHigh={(n)=> setSiliceBounds(prev => ({ ...prev, high: n }))}
+              low={bounds.silice.low}
+              high={bounds.silice.high}
+              setLow={(n)=> setBounds('silice', { ...bounds.silice, low: n })}
+              setHigh={(n)=> setBounds('silice', { ...bounds.silice, high: n })}
               critOn={siliceCritOn}
               setCritOn={setSiliceCritOn}
               critPct={siliceCritPct}
@@ -1073,10 +1075,10 @@ export default function Detail() {
               setTrendOn={(v)=> setParams('grains', { trendOn: v })}
               deltaY={params.grains.deltaY}
               setDeltaY={(n)=> setParams('grains', { deltaY: n })}
-              low={grainsBounds.low}
-              high={grainsBounds.high}
-              setLow={(n)=> setGrainsBounds(prev => ({ ...prev, low: n }))}
-              setHigh={(n)=> setGrainsBounds(prev => ({ ...prev, high: n }))}
+              low={bounds.grains.low}
+              high={bounds.grains.high}
+              setLow={(n)=> setBounds('grains', { ...bounds.grains, low: n })}
+              setHigh={(n)=> setBounds('grains', { ...bounds.grains, high: n })}
               critOn={grainsCritOn}
               setCritOn={setGrainsCritOn}
               critPct={grainsCritPct}

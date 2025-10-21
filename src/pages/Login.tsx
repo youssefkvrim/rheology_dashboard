@@ -28,6 +28,14 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             try {
               const res = await authenticateUser(user, pass);
               if (!res.ok) { setErr('Identifiants invalides'); return; }
+              try {
+                if (res.user) {
+                  sessionStorage.setItem('userId', res.user.userId);
+                  sessionStorage.setItem('email', res.user.email);
+                  sessionStorage.setItem('role', res.user.role);
+                  window.dispatchEvent(new Event('user-login'));
+                }
+              } catch {}
               onLogin();
             } finally {
               setBusy(false);

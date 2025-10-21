@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ErrorBar } from 'recharts';
+import React, { useMemo, useState } from 'react';
+import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ErrorBar, ReferenceLine, ReferenceDot } from 'recharts';
 
 export type MetricPanelProps = {
   title: string;
@@ -17,6 +17,7 @@ export type MetricPanelProps = {
 };
 
 export function MetricPanel(p: MetricPanelProps) {
+  const [hoverTs, setHoverTs] = useState<number | null>(null);
   function niceStep(span: number): number {
     if (!isFinite(span) || span <= 0) return 1;
     const k = Math.floor(Math.log10(span));
@@ -155,6 +156,28 @@ export function MetricPanel(p: MetricPanelProps) {
     return { trendPolyline: poly.length ? poly : null, trendMeta: meta };
   }, [p.trendOn, p.data, p.trendWindowMs, p.trendSegPct]);
 
+  // Trend segments for interpolation at hover timestamp
+  const trendSegments = useMemo(() => {
+    if (!trendPolyline || !(trendPolyline as any[]).length) return [] as Array<{ start:number; end:number; y0:number; y1:number }>;
+    const arr = trendPolyline as Array<{ t:number; trend:number }>;
+    const segs: Array<{ start:number; end:number; y0:number; y1:number }> = [];
+    for (let i = 1; i < arr.length; i += 2) {
+      const a = arr[i-1]; const b = arr[i];
+      if (a && b && b.t !== a.t) segs.push({ start: a.t, end: b.t, y0: a.trend, y1: b.trend });
+    }
+    return segs;
+  }, [trendPolyline]);
+
+  const trendHoverY = useMemo(() => {
+    if (!p.trendOn || hoverTs == null || !trendSegments.length) return null as number | null;
+    const ts = hoverTs as number;
+    let seg = trendSegments.find(s => ts >= s.start && ts <= s.end);
+    if (!seg) seg = ts < trendSegments[0].start ? trendSegments[0] : trendSegments[trendSegments.length - 1];
+    const span = Math.max(1, seg.end - seg.start);
+    const ratio = Math.max(0, Math.min(1, (ts - seg.start) / span));
+    return seg.y0 + (seg.y1 - seg.y0) * ratio;
+  }, [p.trendOn, hoverTs, trendSegments]);
+
   // Downsample indices for error bars: ticks + midpoints mapped to nearest data indices
   const errorBarIndexSet = useMemo(() => {
     if (!p.deltaY || !p.data.length) return new Set<number>();
@@ -224,7 +247,7 @@ export function MetricPanel(p: MetricPanelProps) {
       if (!active || !payload || !payload.length) return null;
       const ts = Number(label ?? payload[0]?.payload?.t ?? 0);
       let trendLabel = '';
-      if (trendMeta && trendMeta.length) {
+      if (p.trendOn && trendMeta && trendMeta.length) {
         const seg = trendMeta.find(s => ts >= s.start && ts <= s.end) || trendMeta[trendMeta.length - 1];
         if (seg) {
           if (seg.m > 0) trendLabel = 'Tendance : Haussière';
@@ -236,7 +259,7 @@ export function MetricPanel(p: MetricPanelProps) {
       const valueEntry = payload.find((e:any)=> e && e.dataKey === 'v');
       const p0 = valueEntry?.payload || payload[0]?.payload;
       const valueStr = p0 && typeof p0.v === 'number' ? `${p.title} : ${formatTick(p0.v)} ${p.unitLabel}`.trim() : '';
-      const avgStr = p0 && typeof p0.avg === 'number' ? `Moyenne : ${formatTick(p0.avg)} ${p.unitLabel}`.trim() : '';
+      const avgStr = (p.avgOn && p0 && typeof p0.avg === 'number') ? `Moyenne : ${formatTick(p0.avg)} ${p.unitLabel}`.trim() : '';
       return (
         <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
           <div>{dateStr}</div>
@@ -246,12 +269,17 @@ export function MetricPanel(p: MetricPanelProps) {
         </div>
       );
     };
-  }, [p.title, p.unitLabel, p.color, trendMeta]);
+  }, [p.title, p.unitLabel, p.color, trendMeta, p.avgOn, p.trendOn]);
 
   return (
     <div className="chart" style={{ height: 260 }}>
       <ResponsiveContainer>
-        <LineChart data={withErrors} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+        <LineChart data={withErrors} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} onMouseMove={(e:any)=>{
+          try {
+            const ts = Number(e?.activeLabel ?? e?.label ?? e?.payload?.[0]?.payload?.t ?? null);
+            setHoverTs(Number.isFinite(ts) ? ts : null);
+          } catch { setHoverTs(null); }
+        }} onMouseLeave={()=> setHoverTs(null)}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" verticalCoordinatesGenerator={(gp:any)=>{
             try {
               if (!p.data.length) return [] as number[];
@@ -286,11 +314,25 @@ export function MetricPanel(p: MetricPanelProps) {
               );
             })()
           )}
-          <Line type="monotone" dataKey="v" name={p.title} stroke={p.color || "#22c55e"} dot={false} activeDot={{ r: 3, strokeOpacity: 0, fillOpacity: 0 }} strokeWidth={2}>
+          <Line type="monotone" dataKey="v" name={p.title} stroke={p.color || "#22c55e"} dot={false} activeDot={{ r: 4, fill: p.color || "#22c55e", stroke: "#ffffff", strokeWidth: 2 }} strokeWidth={2}>
             {p.deltaY ? <ErrorBar dataKey="errorY" width={2} stroke="#a8a29e" /> : null}
           </Line>
           {p.avgOn && <Line type="monotone" dataKey="avg" name="Moyenne" stroke="#ef4444" dot={false} strokeDasharray="4 4" isAnimationActive={false} />}
-          {trendPolyline && <Line data={trendPolyline as any} type="monotone" dataKey="trend" name="Ligne de tendance" stroke="#111827" dot={false} strokeDasharray="10 6" isAnimationActive={false} />}
+          {trendPolyline && (
+            (trendPolyline as any[]).map((pt:any, idx:number, arr:any[]) => (
+              idx % 2 === 1 ? (
+                <ReferenceLine
+                  key={`trend-${idx}`}
+                  segment={[{ x: arr[idx-1].t, y: arr[idx-1].trend }, { x: pt.t, y: pt.trend }]}
+                  stroke="#111827"
+                  strokeDasharray="10 6"
+                />
+              ) : null
+            ))
+          )}
+          {(p.trendOn && hoverTs != null && trendHoverY != null) ? (
+            <ReferenceDot x={hoverTs as any} y={trendHoverY as any} r={4} fill="#111827" stroke="#ffffff" strokeWidth={1} />
+          ) : null}
         </LineChart>
       </ResponsiveContainer>
     </div>

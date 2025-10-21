@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAppState } from '../store/appState';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { useMemo, useState } from 'react';
+import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
 
 function badgeFromViscosity(v: number, low: number, high: number) {
   if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Warning' };
@@ -20,8 +21,8 @@ function mkTooltip(unit: string, metricLabel: string) {
 export default function Home() {
   const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph, doseRateHistory } = useAppState();
   const navigate = useNavigate();
-  const [showTemp, setShowTemp] = useState(false);
-  const [showHumid, setShowHumid] = useState(false);
+  const [ambientOpen, setAmbientOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Memoized formatters and series for mini-charts
   const dayTickFormatter = useMemo(() => (ts: any) => new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), []);
@@ -55,12 +56,12 @@ export default function Home() {
     <div>
       <h2>Accueil</h2>
       <div className="grid" style={{ marginTop: 8 }}>
-        <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setShowTemp(v => !v)}>
+        <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setAmbientOpen(v => !v)}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>Température salle</div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{ambient.temperatureRoom.toFixed(1)} °C</div>
           </div>
-          {showTemp && (
+          {ambientOpen && (
             <div style={{ height: 120, marginTop: 6 }}>
               <ResponsiveContainer>
                   <LineChart data={tempChartData} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
@@ -75,12 +76,12 @@ export default function Home() {
             </div>
           )}
         </div>
-        <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setShowHumid(v => !v)}>
+        <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setAmbientOpen(v => !v)}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>Humidité salle</div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{ambient.humidityRoom} %</div>
           </div>
-          {showHumid && (
+          {ambientOpen && (
             <div style={{ height: 120, marginTop: 6 }}>
               <ResponsiveContainer>
                   <LineChart data={humidChartData} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
@@ -110,17 +111,9 @@ export default function Home() {
           const badgePC = pc != null ? (pc < 60 || pc > 75 ? { cls: 'warn', label: 'Critical' } : { cls: 'ok', label: 'OK' }) : null;
           return (
             <div key={b.id} className={`card card-bb`} style={{ opacity: b.online ? 1 : 0.6, cursor: 'pointer' }} onClick={() => {
-              if (b.id === '__new__') {
-                const pwd = prompt('Mot de passe du tableau de bord:');
-                if (pwd !== 'pfx') { alert('Mot de passe invalide'); return; }
-                const type = prompt('Type (M7-3 / 2CN2 / R55):', 'M7-3');
-                if (!type) return;
-                const nom = prompt('Nom de la barbotine (ex: M7-3 009):', `${type} `);
-                if (!nom || !nom.trim()) return;
-                addBarbotine(nom.trim(), false);
-                return;
-              }
-              if (clickable) navigate(`/barbotine/${b.id}`);
+              if (b.id === '__new__') { setCreateOpen(true); return; }
+              // Open detail for both online and offline; offline shows empty charts there
+              navigate(`/barbotine/${b.id}`);
             }}>
               <div className="row" style={{ justifyContent: 'space-between' }}>
                 <h3>{b.id === '__new__' ? 'Ajouter une barbotine' : b.name}</h3>
@@ -168,12 +161,22 @@ export default function Home() {
                   </div>
                 </>
               ) : (
+                // Offline card: show placeholder summary; click navigates to empty detail page
                 <div className="muted">—</div>
               )}
             </div>
           );
         })}
       </div>
+      {createOpen && (
+        <BarbotineCreateDialog
+          open={createOpen}
+          onClose={()=> setCreateOpen(false)}
+          onConfirm={(nom, config) => {
+            addBarbotine(nom, false, config);
+          }}
+        />
+      )}
     </div>
   );
 }

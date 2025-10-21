@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Barbotine, Bounds, MetricSample, MetricsSeries, RangeKey } from '../types/domain';
+import { Barbotine, Bounds, MetricSample, MetricsSeries, RangeKey, BarbotineConfig } from '../types/domain';
 import { MetricsRepository, SimMetricsRepository } from '../repositories/metricsRepo';
 
 type AppState = {
   seed: number;
   barbotines: Barbotine[];
   seriesM7: MetricsSeries;
-  bounds: { densite: Bounds; viscosite: Bounds; ph: Bounds; temperature: Bounds };
+  bounds: { densite: Bounds; viscosite: Bounds; ph: Bounds; temperature: Bounds; pc: Bounds; h2o: Bounds; silice: Bounds; grains: Bounds };
   setBounds: (metric: keyof AppState['bounds'], next: Bounds) => void;
   overrideLog: { ts: number; action: string; reason: string }[];
   startMassTest: () => MetricSample[];
@@ -26,7 +26,7 @@ type AppState = {
   addCoverPowerResult: (value: number) => void;
   lastPlaqueSrc: string | null;
   setLastPlaqueSrc: (src: string | null) => void;
-  addBarbotine: (label: string, online?: boolean) => void;
+  addBarbotine: (label: string, online?: boolean, config?: BarbotineConfig) => void;
   applyMetricPoints: (key: 'densite'|'viscosite'|'ph'|'temperature', points: { t:number; v:number }[], mode: 'overwrite') => void;
 };
 
@@ -64,9 +64,10 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const rng = useMemo(() => createMulberry32(seedParam), [seedParam]);
 
   const [bounds, setBoundsState] = useState(() => {
-    const defaults = { densite: { low: 1.25 as number | null, high: 1.45 as number | null }, viscosite: { low: 350 as number | null, high: 550 as number | null }, ph: { low: 7.5 as number | null, high: 9.0 as number | null }, temperature: { low: 18 as number | null, high: 28 as number | null } };
+    const defaults = { densite: { low: 1.25 as number | null, high: 1.45 as number | null }, viscosite: { low: 350 as number | null, high: 550 as number | null }, ph: { low: 7.5 as number | null, high: 9.0 as number | null }, temperature: { low: 18 as number | null, high: 28 as number | null }, pc: { low: null as number | null, high: null as number | null }, h2o: { low: null as number | null, high: null as number | null }, silice: { low: null as number | null, high: null as number | null }, grains: { low: null as number | null, high: null as number | null } };
     try {
-      const raw = localStorage.getItem('bounds');
+      const userId = sessionStorage.getItem('userId') || 'anonymous';
+      const raw = localStorage.getItem(`bounds:${userId}`);
       if (raw) {
         const parsed = JSON.parse(raw);
         return { ...defaults, ...parsed };
@@ -117,8 +118,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [lastPlaqueSrc, setLastPlaqueSrc] = useState<string | null>(null);
 
   const [barbotines, setBarbotines] = useState<Barbotine[]>(() => {
+    try {
+      const raw = localStorage.getItem('barbotines');
+      if (raw) return JSON.parse(raw) as Barbotine[];
+    } catch { /* ignore */ }
     const names = generateNames();
-    return names.map((name, idx) => ({
+    return names.map((name) => ({
       id: name,
       name,
       online: name === 'M7-3 006',
@@ -181,14 +186,34 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }, 5000);
     return () => clearInterval(id);
   }, [rng, live]);
+  // Persist barbotines list
+  useEffect(() => {
+    try {
+      localStorage.setItem('barbotines', JSON.stringify(barbotines));
+    } catch { /* ignore */ }
+  }, [barbotines]);
+
+
+  useEffect(() => { localStorage.setItem('live', live ? '1' : '0'); }, [live]);
 
   useEffect(() => {
-    localStorage.setItem('live', live ? '1' : '0');
-  }, [live]);
-
-  useEffect(() => {
-    try { localStorage.setItem('bounds', JSON.stringify(bounds)); } catch { /* ignore */ }
+    try {
+      const userId = sessionStorage.getItem('userId') || 'anonymous';
+      localStorage.setItem(`bounds:${userId}`, JSON.stringify(bounds));
+    } catch { /* ignore */ }
   }, [bounds]);
+
+  useEffect(() => {
+    const onLogin = () => {
+      try {
+        const userId = sessionStorage.getItem('userId') || 'anonymous';
+        const raw = localStorage.getItem(`bounds:${userId}`);
+        if (raw) setBoundsState((prev: typeof bounds) => ({ ...prev, ...(JSON.parse(raw) as typeof prev) }));
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('user-login', onLogin);
+    return () => window.removeEventListener('user-login', onLogin);
+  }, []);
 
   const startMassTest = () => {
     const start = Date.now();
@@ -313,7 +338,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addCoverPowerResult: (value: number) => setCoverPowerHistory(prev => [...prev, { t: Date.now(), v: Number(value.toFixed(2)) }].slice(-200)),
     lastPlaqueSrc,
     setLastPlaqueSrc,
-    addBarbotine: (label: string, online?: boolean) => setBarbotines(prev => [...prev, { id: label, name: label, online: !!online, last: null }]),
+    addBarbotine: (label: string, online?: boolean, config?: BarbotineConfig) => setBarbotines(prev => [...prev, { id: label, name: label, online: !!online, last: null, config }]),
     applyMetricPoints: (key, points) => {
       setSeriesM7(prev => {
         const map = new Map<number, number>();
