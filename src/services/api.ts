@@ -28,6 +28,54 @@ export async function fetchMetricBetween(
   throw new Error('API not implemented: fetchMetricBetween');
 }
 
+// --------------------- Rheology (SQL proxy) ---------------------
+export async function fetchRheologySeries(
+  slurryId: string,
+  parameter: 'density'|'viscosity'|'pc'|'H2O'|'temperature'|'pH'|'silice'|'grain',
+  startTs?: number,
+  endTs?: number
+): Promise<{ t:number; v:number; unit?: string }[]> {
+  const params = new URLSearchParams({ slurryId, parameter });
+  if (startTs != null) params.set('start', String(startTs));
+  if (endTs != null) params.set('end', String(endTs));
+  const res = await fetch(`${BASE}/rheology?${params.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchLatestBounds(
+  slurryId: string
+): Promise<{ key: 'densite'|'viscosite'|'pc'|'h2o'|'temperature'|'ph'|'silice'|'grains'; low: number|null; high: number|null }[]> {
+  const res = await fetch(`${BASE}/rheology/bounds?slurryId=${encodeURIComponent(slurryId)}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchRheologyAll(
+  slurryId: string,
+  params: string[] = ['density','viscosity','pH','temperature','pc','H2O'],
+  includeBounds = true
+): Promise<{ series: Record<string, { t:number; v:number; unit?: string }[]>; bounds?: { key:string; low:number|null; high:number|null }[] }>{
+  const q = new URLSearchParams({ slurryId, params: params.join(','), includeBounds: includeBounds ? '1' : '0' });
+  const res = await fetch(`${BASE}/rheology/all?${q.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data;
+}
+
+export async function fetchRheologyLatestAll(
+  slurryIds: string[],
+  params: string[] = ['density','viscosity','pH','temperature','pc','H2O']
+): Promise<Record<string, Record<string, { t:number; v:number; unit?: string; prevV?: number; prevT?: number }>>> {
+  const q = new URLSearchParams({ slurries: slurryIds.join(','), params: params.join(',') });
+  const res = await fetch(`${BASE}/rheology/latest-all?${q.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data || {};
+}
+
 // -------------------- Auth (structure for future SQL) --------------------
 
 export type AuthUser = { userId: string; email: string; role: 'admin' | 'user'; passwordHash: string };

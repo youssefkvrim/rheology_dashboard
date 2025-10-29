@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import { useAppState } from '../store/appState';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
+import { fetchRheologyLatestAll } from '../services/api';
 
 function badgeFromViscosity(v: number, low: number, high: number) {
   if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Warning' };
@@ -19,10 +20,27 @@ function mkTooltip(unit: string, metricLabel: string) {
 }
 
 export default function Home() {
-  const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph, doseRateHistory } = useAppState();
+  const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph, doseRateHistory, getBoundsFor } = useAppState();
   const navigate = useNavigate();
   const [ambientOpen, setAmbientOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [latest, setLatest] = useState<Record<string, Record<string, { t:number; v:number; unit?: string; prevV?: number; prevT?: number }>> | null>(null);
+  const [dbReachable, setDbReachable] = useState<boolean>(true);
+
+  useEffect(() => {
+    const slurries = barbotines.map(b => (b as any).slurryId).filter(Boolean) as string[];
+    if (!slurries.length) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchRheologyLatestAll(slurries);
+        if (!cancelled) { setLatest(data || {}); setDbReachable(true); }
+      } catch {
+        if (!cancelled) { setLatest({}); setDbReachable(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [barbotines.length]);
 
   // Memoized formatters and series for mini-charts
   const dayTickFormatter = useMemo(() => (ts: any) => new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), []);
@@ -46,10 +64,10 @@ export default function Home() {
     const last12 = doseRateHistory.filter(p => p.t >= now - 12 * 60 * 60 * 1000);
     if (last12.length >= 2) {
       const first = last12[0].v; const last = last12[last12.length - 1].v;
-      if (last > first + 0.0005) return '/upward.svg';
-      if (last < first - 0.0005) return '/downward.svg';
+      if (last > first + 0.0005) return '/assets/upward.svg';
+      if (last < first - 0.0005) return '/assets/downward.svg';
     }
-    return '/constant.svg';
+    return '/assets/constant.svg';
   }, [doseRateHistory]);
 
   return (
@@ -99,65 +117,109 @@ export default function Home() {
       </div>
       <div className="grid" style={{ marginTop: 12 }}>
         {[...barbotines, { id: '__new__', name: 'Ajouter une barbotine', online: false, last: null } as any].map(b => {
-          const clickable = b.online && b.id === 'M7-3 006';
-          const lastV = b.last?.viscosite ?? null;
-          const badgeV = lastV != null && bounds.viscosite.low != null && bounds.viscosite.high != null
-            ? badgeFromViscosity(lastV, bounds.viscosite.low as number, bounds.viscosite.high as number) : null;
-          const dens = b.last?.densite ?? null;
-          const badgeD = dens != null && bounds.densite.low != null && bounds.densite.high != null
-            ? (dens < (bounds.densite.low as number) || dens > (bounds.densite.high as number) ? { cls: 'err', label: 'Warning' } : { cls: 'ok', label: 'OK' })
-            : null;
-          const pc = b.last ? (65 + Math.round(((b.last.viscosite%10)-5)*2)) : null;
-          const badgePC = pc != null ? (pc < 60 || pc > 75 ? { cls: 'warn', label: 'Critical' } : { cls: 'ok', label: 'OK' }) : null;
+          const sid = (b as any).slurryId as string | undefined;
+          const rec = (sid && latest && latest[sid]) || {} as any;
+          const now = Date.now();
+          const within = (ms:number|undefined, windowMs:number) => (ms!=null && ms>0 && (now - ms) <= windowMs);
+          const threeMonths = 90*24*60*60*1000; const sevenMonths = 210*24*60*60*1000;
+          const lastD = rec['density'] as any; const lastV = rec['viscosity'] as any; const lastPC = rec['pc'] as any; const lastH2O = rec['H2O'] as any;
+          const showD = lastD && within(lastD.t, threeMonths); const showV = lastV && within(lastV.t, threeMonths); const showPC = lastPC && within(lastPC.t, threeMonths); const showH2O = lastH2O && within(lastH2O.t, threeMonths);
+          const onlineByData = (!!rec && Object.values(rec).some((r:any)=> within(r?.t, sevenMonths)));
+          const isOnline = dbReachable && onlineByData;
+          const bnds = getBoundsFor(b.id);
+          function statusFromBounds(val:number|null|undefined, key:'densite'|'viscosite'|'pc'|'h2o'|'temperature'|'ph'){
+            if (val==null) return null;
+            const bb:any = (bnds as any)[key];
+            if (!bb) return null;
+            const hasLow = bb.low != null; const hasHigh = bb.high != null;
+            // Outside any defined bound -> Warning
+            if (hasLow && val < (bb.low as number)) return { cls: 'warn', label: 'Warning' };
+            if (hasHigh && val > (bb.high as number)) return { cls: 'warn', label: 'Warning' };
+            // Single-side bound -> OK if inside
+            if (hasLow && !hasHigh) return { cls: 'ok', label: 'OK' };
+            if (!hasLow && hasHigh) return { cls: 'ok', label: 'OK' };
+            // Both bounds -> Critical band near edges, else OK
+            if (hasLow && hasHigh) {
+              const y1 = bb.low as number; const y2 = bb.high as number; if (!(y2>y1)) return { cls: 'ok', label: 'OK' };
+              const span = y2 - y1; const crit = 0.30; const edge = span * (crit/2);
+              if (val <= y1 + edge || val >= y2 - edge) return { cls: 'err', label: 'Critical' };
+              return { cls: 'ok', label: 'OK' };
+            }
+            return null;
+          }
+          const badgeD = statusFromBounds(showD? Number(lastD.v): null, 'densite');
+          const badgeV = statusFromBounds(showV? Number(lastV.v): null, 'viscosite');
+          const badgePC = statusFromBounds(showPC? Number(lastPC.v): null, 'pc');
+          const trendIcon = (()=>{
+            if (!showH2O || lastH2O?.prevV==null) return '/assets/constant.svg';
+            const lv = Number(lastH2O.v); const pv = Number(lastH2O.prevV);
+            if (lv > pv) return '/assets/upward.svg'; if (lv < pv) return '/assets/downward.svg'; return '/assets/constant.svg';
+          })();
           return (
-            <div key={b.id} className={`card card-bb`} style={{ opacity: b.online ? 1 : 0.6, cursor: 'pointer' }} onClick={() => {
+            <div key={b.id} className={`card card-bb`} style={{ opacity: isOnline ? 1 : 0.6, cursor: 'pointer' }} onClick={() => {
               if (b.id === '__new__') { setCreateOpen(true); return; }
               // Open detail for both online and offline; offline shows empty charts there
-              navigate(`/barbotine/${b.id}`);
+              navigate(`/barbotine/${encodeURIComponent(b.id)}`);
             }}>
               <div className="row" style={{ justifyContent: 'space-between' }}>
                 <h3>{b.id === '__new__' ? 'Ajouter une barbotine' : b.name}</h3>
                 {b.id !== '__new__' && (
-                  <span className="badge" style={{ background: b.online ? 'rgba(34,197,94,0.08)' : 'rgba(148,163,184,0.08)' }}>
-                    {b.online ? 'En ligne' : 'Hors ligne'}
+                  <span className="badge" style={{ background: isOnline ? 'rgba(34,197,94,0.08)' : 'rgba(148,163,184,0.08)' }}>
+                    {isOnline ? 'En ligne' : 'Hors ligne'}
                   </span>
                 )}
               </div>
               {b.id === '__new__' ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 42, color: 'var(--muted)' }}>+</div>
-              ) : b.online && b.last ? (
+              ) : isOnline ? (
                 <>
                   {/* Densité */}
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <div className="row">
-                      <span className={`dot ${badgeD?.cls === 'ok' ? 'green' : badgeD?.cls === 'warn' ? 'orange' : 'red'}`}></span>
-                      <div>Densité: <strong>{b.last.densite.toFixed(3)} g/cm³</strong></div>
+                      {showD ? (
+                        <span className={`dot ${badgeD?.cls === 'ok' ? 'green' : badgeD?.cls === 'warn' ? 'orange' : 'red'}`}></span>
+                      ) : (
+                        <span className="dot" style={{ background: 'var(--muted)' }}></span>
+                      )}
+                      <div>Densité: <strong>{showD ? Number(lastD.v).toFixed(3)+' g/cm³' : '—'}</strong></div>
                     </div>
-                    <span className={`badge ${badgeD?.cls}`}>{badgeD?.label}</span>
+                    {badgeD && <span className={`badge ${badgeD.cls}`}>{badgeD.label}</span>}
                   </div>
                   {/* Viscosité */}
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <div className="row">
-                      <span className={`dot ${badgeV?.cls === 'ok' ? 'green' : badgeV?.cls === 'warn' ? 'orange' : 'red'}`}></span>
-                      <div>Viscosité: <strong>{Math.round(b.last.viscosite)} mPa·s</strong></div>
+                      {showV ? (
+                        <span className={`dot ${badgeV?.cls === 'ok' ? 'green' : badgeV?.cls === 'warn' ? 'orange' : 'red'}`}></span>
+                      ) : (
+                        <span className="dot" style={{ background: 'var(--muted)' }}></span>
+                      )}
+                      <div>Viscosité: <strong>{showV ? Math.round(Number(lastV.v))+' mPa·s' : '—'}</strong></div>
                     </div>
-                    <span className={`badge ${badgeV?.cls}`}>{badgeV?.label}</span>
+                    {badgeV && <span className={`badge ${badgeV.cls}`}>{badgeV.label}</span>}
                   </div>
                   {/* PC */}
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <div className="row">
-                      <span className={`dot ${badgePC?.cls === 'ok' ? 'green' : badgePC?.cls === 'warn' ? 'orange' : 'red'}`}></span>
-                      <div>PC: <strong>{pc} g</strong></div>
+                      {showPC ? (
+                        <span className={`dot ${badgePC?.cls === 'ok' ? 'green' : badgePC?.cls === 'warn' ? 'orange' : 'red'}`}></span>
+                      ) : (
+                        <span className="dot" style={{ background: 'var(--muted)' }}></span>
+                      )}
+                      <div>PC: <strong>{showPC ? Number(lastPC.v).toFixed(2)+' g' : '—'}</strong></div>
                     </div>
-                    <span className={`badge ${badgePC?.cls}`}>{badgePC?.label}</span>
+                    {badgePC && <span className={`badge ${badgePC.cls}`}>{badgePC.label}</span>}
                   </div>
                   {/* H2O */}
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <div className="row">
-                      <span className="dot blue"></span>
-                      <div>Débit H₂O: <strong>{doseRateLph.toFixed(3)} L/h</strong></div>
+                      {showH2O ? (
+                        <span className="dot blue"></span>
+                      ) : (
+                        <span className="dot" style={{ background: 'var(--muted)' }}></span>
+                      )}
+                      <div>Débit H₂O: <strong>{showH2O ? Number(lastH2O.v).toFixed(3)+' L/h' : '—'}</strong></div>
                     </div>
-                    <img src={h2oTrendIcon} alt="trend" style={{ width: 16, height: 16 }} />
+                    <img src={trendIcon} alt="trend" style={{ width: 16, height: 16 }} />
                   </div>
                 </>
               ) : (

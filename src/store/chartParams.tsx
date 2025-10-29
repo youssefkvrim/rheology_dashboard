@@ -9,26 +9,34 @@ export type ChartMetricParams = {
   deltaY: number; // symmetric error ± delta
   trendWindowMs: number; // 0 = full series
   trendSegPct?: number; // 10..100 segmentation percent of X window
+  // Interpolation hover options
+  interpOn?: boolean;
+  interpMode?: 'linear' | 'lagrange3';
 };
 
 type ChartParamsState = Record<ChartMetricKey, ChartMetricParams>;
+type ChartParamsById = Record<string, ChartParamsState>;
 
 type ChartParamsContextValue = {
+  // Legacy global (kept for non-detail screens)
   params: ChartParamsState;
   setParams: (metric: ChartMetricKey, patch: Partial<ChartMetricParams>) => void;
+  // Scoped per barbotine ID
+  getParamsFor: (id: string) => ChartParamsState;
+  setParamsFor: (id: string, metric: ChartMetricKey, patch: Partial<ChartMetricParams>) => void;
 };
 
 const ChartParamsContext = createContext<ChartParamsContextValue | undefined>(undefined);
 
 const defaultParams: ChartParamsState = {
-  densite: { unit: 'g/cm³', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  viscosite: { unit: 'mPa·s', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  temperature: { unit: '°C', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  ph: { unit: '(-)', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  pc: { unit: 'g', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  h2o: { unit: 'L/h', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  silice: { unit: '%', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
-  grains: { unit: '%', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100 },
+  densite: { unit: 'g/cm³', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  viscosite: { unit: 'mPa·s', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  temperature: { unit: '°C', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  ph: { unit: '(-)', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  pc: { unit: 'g', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  h2o: { unit: 'L/h', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  silice: { unit: '%', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
+  grains: { unit: '%', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
 };
 
 export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ children }) => {
@@ -40,6 +48,14 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
     } catch {}
     return defaultParams;
   });
+  const [paramsById, setParamsById] = useState<ChartParamsById>(() => {
+    try {
+      const userId = sessionStorage.getItem('userId') || 'anonymous';
+      const raw = localStorage.getItem(`chartParamsById:${userId}`);
+      if (raw) return JSON.parse(raw) as ChartParamsById;
+    } catch {}
+    return {} as ChartParamsById;
+  });
 
   useEffect(() => {
     try {
@@ -47,6 +63,12 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
       localStorage.setItem(`chartParams:${userId}`, JSON.stringify(params));
     } catch {}
   }, [params]);
+  useEffect(() => {
+    try {
+      const userId = sessionStorage.getItem('userId') || 'anonymous';
+      localStorage.setItem(`chartParamsById:${userId}`, JSON.stringify(paramsById));
+    } catch {}
+  }, [paramsById]);
 
   useEffect(() => {
     const onLogin = () => {
@@ -54,6 +76,8 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
         const userId = sessionStorage.getItem('userId') || 'anonymous';
         const raw = localStorage.getItem(`chartParams:${userId}`);
         if (raw) setParamsState({ ...defaultParams, ...(JSON.parse(raw) as ChartParamsState) });
+        const rawById = localStorage.getItem(`chartParamsById:${userId}`);
+        if (rawById) setParamsById(JSON.parse(rawById) as ChartParamsById);
       } catch {}
     };
     window.addEventListener('user-login', onLogin);
@@ -62,7 +86,16 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
   const value = useMemo<ChartParamsContextValue>(()=>({
     params,
     setParams: (metric, patch) => setParamsState(p => ({ ...p, [metric]: { ...p[metric], ...patch } })),
-  }), [params]);
+    getParamsFor: (id: string) => {
+      const scoped = paramsById[id];
+      return scoped ? ({ ...defaultParams, ...scoped }) : defaultParams;
+    },
+    setParamsFor: (id: string, metric, patch) => setParamsById(prev => {
+      const current = prev[id] ? ({ ...defaultParams, ...prev[id] }) : defaultParams;
+      const nextForId: ChartParamsState = { ...current, [metric]: { ...current[metric], ...patch } };
+      return { ...prev, [id]: nextForId };
+    }),
+  }), [params, paramsById]);
   return <ChartParamsContext.Provider value={value}>{children}</ChartParamsContext.Provider>;
 };
 

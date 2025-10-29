@@ -6,6 +6,7 @@ import { useChartParams } from '../store/chartParams';
 import { ParamsModal } from '../components/ParamsModal';
 import { MetricPanel } from '../components/MetricPanel';
 import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
+import { fetchRheologyAll } from '../services/api';
 
 function formatTime(ts: number) {
   const d = new Date(ts); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
@@ -34,18 +35,18 @@ function niceCeilMax(maxVal: number, step: number): number {
 
 export default function Detail() {
   const { id } = useParams();
-  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, live, setLive, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory, barbotines } = useAppState();
-  const { params, setParams } = useChartParams();
+  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, live, setLive, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory, barbotines, getBoundsFor, setBoundsFor } = useAppState();
+  const { params, setParams, getParamsFor, setParamsFor } = useChartParams();
   const [massSeries, setMassSeries] = useState<{ t: number; v: number }[] | null>(null);
   const [testState, setTestState] = useState<'idle' | 'calib' | 'trempe' | 'egouttage' | 'mesure' | 'termine'>('idle');
   const [remaining, setRemaining] = useState<number>(0);
   const [overrideText, setOverrideText] = useState('');
   const [overrideJustif, setOverrideJustif] = useState('');
   const [manual, setManual] = useState<{ densite?: string; viscosite?: string; ph?: string; temperature?: string }>({});
-  const [densRange, setDensRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
-  const [viscRange, setViscRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
-  const [tempRange, setTempRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
-  const [phRange, setPhRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>('3h');
+  const [densRange, setDensRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:densite`) as any) || '3m');
+  const [viscRange, setViscRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:viscosite`) as any) || '3m');
+  const [tempRange, setTempRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:temperature`) as any) || '3m');
+  const [phRange, setPhRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:ph`) as any) || '3m');
   // anchors for horizontal pan per chart
   const [densAnchor, setDensAnchor] = useState<number | undefined>(undefined);
   const [viscAnchor, setViscAnchor] = useState<number | undefined>(undefined);
@@ -58,7 +59,7 @@ export default function Detail() {
   const [phY, setPhY] = useState<[number, number]>([6.5, 9.8]);
   // drag state
   const dragRef = useRef<{ startX: number; startY: number; startAnchor: number; startYMin: number; startYMax: number; mode: 'x' | 'y' | null } | null>(null);
-  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all' | 'specific'>('7d');
+  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all' | 'specific'>(()=> (localStorage.getItem(`range:${id}:pc`) as any) || '3m');
   const [pcBounds, setPcBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.pc?.low ?? null, high: bounds.pc?.high ?? null }));
   const [imageModal, setImageModal] = useState<'photo' | 'ai' | null>(null);
   const [imgScale, setImgScale] = useState<number>(1);
@@ -75,7 +76,7 @@ export default function Detail() {
   const [h2oAvgOn, setH2oAvgOn] = useState<boolean>(true);
   const [h2oCritOn, setH2oCritOn] = useState<boolean>(true);
   const [h2oCritPct, setH2oCritPct] = useState<number>(30);
-  const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>('3h');
+  const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>(()=> (localStorage.getItem(`range:${id}:h2o`) as any) || '3m');
   const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.h2o.low, high: bounds.h2o.high }));
   // critical zones settings (pre-activated at 30%)
   const [densCritOn, setDensCritOn] = useState<boolean>(true);
@@ -90,8 +91,8 @@ export default function Detail() {
   const [pcCritPct, setPcCritPct] = useState<number>(30);
 
   // Extra panels: Silice and Grains
-  const [siliceRange, setSiliceRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>('3h');
-  const [grainsRange, setGrainsRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>('3h');
+  const [siliceRange, setSiliceRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>(()=> (localStorage.getItem(`range:${id}:silice`) as any) || '3m');
+  const [grainsRange, setGrainsRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>(()=> (localStorage.getItem(`range:${id}:grains`) as any) || '3m');
   const [siliceBounds, setSiliceBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.silice.low, high: bounds.silice.high }));
   const [grainsBounds, setGrainsBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.grains.low, high: bounds.grains.high }));
   const [siliceAvgOn, setSiliceAvgOn] = useState<boolean>(true);
@@ -100,6 +101,41 @@ export default function Detail() {
   const [siliceCritPct, setSiliceCritPct] = useState<number>(30);
   const [grainsCritOn, setGrainsCritOn] = useState<boolean>(true);
   const [grainsCritPct, setGrainsCritPct] = useState<number>(30);
+
+  // Optional DB-backed series (overrides simulated series when present)
+  const [dbSeries, setDbSeries] = useState<null | { densite: { t:number; v:number }[]; viscosite: { t:number; v:number }[]; ph: { t:number; v:number }[]; temperature: { t:number; v:number }[] }>(null);
+  const [pcDb, setPcDb] = useState<null | { t:number; v:number }[]>(null);
+  const [h2oDb, setH2oDb] = useState<null | { t:number; v:number }[]>(null);
+
+  const current = useMemo(()=> barbotines.find(b => b.id === id) || null, [barbotines, id]);
+  const sid = (current && (current as any).slurryId) as string | undefined;
+  useEffect(() => {
+    if (!sid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { series, bounds } = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O'], true);
+        if (cancelled) return;
+        setDbSeries({
+          densite: (series['density']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
+          viscosite: (series['viscosity']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
+          ph: (series['pH']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
+          temperature: (series['temperature']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
+        });
+        setPcDb((series['pc']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
+        setH2oDb((series['H2O']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
+        // Apply latest bounds (USL/LSL)
+        const keyMap: Record<string, any> = { density: 'densite', viscosity: 'viscosite', pH: 'ph', temperature: 'temperature', H2O: 'h2o', pc: 'pc', silice: 'silice', grain: 'grains' };
+        if (Array.isArray(bounds)) {
+          bounds.forEach((b:any) => {
+            const k = keyMap[b.key] || b.key;
+            setBoundsFor(id || '', k as any, { low: (b.lsl ?? b.low) ?? null, high: (b.usl ?? b.high) ?? null });
+          });
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [sid, id]);
 
   function getSpecificRange(): [number, number] {
     const now = Date.now();
@@ -111,12 +147,25 @@ export default function Detail() {
     return [start, end];
   }
   const [specStart, specEnd] = getSpecificRange();
-  const current = useMemo(()=> barbotines.find(b => b.id === id) || null, [barbotines, id]);
   const isOnline = !!current?.online;
-  const densSource = isOnline ? (densRange === 'all' ? seriesM7.densite : densRange === 'specific' ? getSeriesBetween(specStart, specEnd).densite : getSeriesForRange(densRange, densAnchor).densite) : [];
-  const viscSource = isOnline ? (viscRange === 'all' ? seriesM7.viscosite : viscRange === 'specific' ? getSeriesBetween(specStart, specEnd).viscosite : getSeriesForRange(viscRange, viscAnchor).viscosite) : [];
-  const tempSource = isOnline ? (tempRange === 'all' ? seriesM7.temperature : tempRange === 'specific' ? getSeriesBetween(specStart, specEnd).temperature : getSeriesForRange(tempRange, tempAnchor).temperature) : [];
-  const phSource = isOnline ? (phRange === 'all' ? seriesM7.ph : phRange === 'specific' ? getSeriesBetween(specStart, specEnd).ph : getSeriesForRange(phRange, phAnchor).ph) : [];
+  const scopedBounds = useMemo(()=> getBoundsFor(id || ''), [getBoundsFor, id]);
+  function filterByRange(arr: { t:number; v:number }[], range: typeof densRange, anchor?: number) {
+    if (!arr || !arr.length) return [] as { t:number; v:number }[];
+    const now = Date.now();
+    let end = Math.min(anchor ?? now, now);
+    let start = end - 3*60*60*1000;
+    if (range==='1d') start = end - 24*60*60*1000;
+    else if (range==='7d') start = end - 7*24*60*60*1000;
+    else if (range==='1m') start = end - 30*24*60*60*1000;
+    else if (range==='3m') start = end - 90*24*60*60*1000;
+    else if (range==='all') { start = 0; }
+    else if (range==='specific') { start = specStart; end = specEnd; }
+    return arr.filter(p => p.t >= start && p.t <= end);
+  }
+  const densSource = dbSeries ? filterByRange(dbSeries.densite, densRange, densAnchor) : [];
+  const viscSource = dbSeries ? filterByRange(dbSeries.viscosite, viscRange, viscAnchor) : [];
+  const tempSource = dbSeries ? filterByRange(dbSeries.temperature, tempRange, tempAnchor) : [];
+  const phSource = dbSeries ? filterByRange(dbSeries.ph, phRange, phAnchor) : [];
   const densiteData = useMemo(() => densSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(3)) })), [densSource]);
   const viscositeData = useMemo(() => viscSource.map(p => ({ time: p.t, value: Math.round(p.v) })), [viscSource]);
   const phData = useMemo(() => phSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [phSource]);
@@ -131,58 +180,52 @@ export default function Detail() {
   const phSeries = useMemo(()=> phData.map(d=>({ ...d, avg: phAvg ?? undefined })), [phData, phAvg]);
 
   // Unit conversions for panels (target units come from chart params context)
-  const densConv = useMemo(() => densConverters(params.densite.unit), [params.densite.unit]);
+  const scopedParams = useMemo(() => getParamsFor(id || ''), [getParamsFor, id]);
+  const setScoped = (metric: any, patch: any) => setParamsFor(id || '', metric, patch);
+  const densConv = useMemo(() => densConverters(scopedParams.densite.unit), [scopedParams.densite.unit]);
   const densPanelData = useMemo(() => densSeries.map(d => ({ t: d.time, v: densConv.to(d.value), avg: d.avg != null ? densConv.to(d.avg) : undefined })), [densSeries, densConv]);
   const densYConv = useMemo(() => [densConv.to(densY[0]), densConv.to(densY[1])] as [number, number], [densY, densConv]);
-  const densBoundsConv = useMemo(() => ({ low: bounds.densite.low==null?null:densConv.to(bounds.densite.low as number), high: bounds.densite.high==null?null:densConv.to(bounds.densite.high as number) }), [bounds.densite, densConv]);
+  const densBoundsConv = useMemo(() => ({ low: scopedBounds.densite.low==null?null:densConv.to(scopedBounds.densite.low as number), high: scopedBounds.densite.high==null?null:densConv.to(scopedBounds.densite.high as number) }), [scopedBounds.densite, densConv]);
 
-  const viscConv = useMemo(() => viscConverters(params.viscosite.unit), [params.viscosite.unit]);
+  const viscConv = useMemo(() => viscConverters(scopedParams.viscosite.unit), [scopedParams.viscosite.unit]);
   const viscPanelData = useMemo(() => viscSeries.map(d => ({ t: d.time, v: viscConv.to(d.value), avg: d.avg != null ? viscConv.to(d.avg) : undefined })), [viscSeries, viscConv]);
   const viscYConv = useMemo(() => [viscConv.to(viscY[0]), viscConv.to(viscY[1])] as [number, number], [viscY, viscConv]);
-  const viscBoundsConv = useMemo(() => ({ low: bounds.viscosite.low==null?null:viscConv.to(bounds.viscosite.low as number), high: bounds.viscosite.high==null?null:viscConv.to(bounds.viscosite.high as number) }), [bounds.viscosite, viscConv]);
+  const viscBoundsConv = useMemo(() => ({ low: scopedBounds.viscosite.low==null?null:viscConv.to(scopedBounds.viscosite.low as number), high: scopedBounds.viscosite.high==null?null:viscConv.to(scopedBounds.viscosite.high as number) }), [scopedBounds.viscosite, viscConv]);
 
-  const tempConv = useMemo(() => tempConverters(params.temperature.unit), [params.temperature.unit]);
+  const tempConv = useMemo(() => tempConverters(scopedParams.temperature.unit), [scopedParams.temperature.unit]);
   const tempPanelData = useMemo(() => tempSeries.map(d => ({ t: d.time, v: tempConv.to(d.value), avg: d.avg != null ? tempConv.to(d.avg) : undefined })), [tempSeries, tempConv]);
   const tempYConv = useMemo(() => [tempConv.to(tempY[0]), tempConv.to(tempY[1])] as [number, number], [tempY, tempConv]);
-  const tempBoundsConv = useMemo(() => ({ low: bounds.temperature.low==null?null:tempConv.to(bounds.temperature.low as number), high: bounds.temperature.high==null?null:tempConv.to(bounds.temperature.high as number) }), [bounds.temperature, tempConv]);
+  const tempBoundsConv = useMemo(() => ({ low: scopedBounds.temperature.low==null?null:tempConv.to(scopedBounds.temperature.low as number), high: scopedBounds.temperature.high==null?null:tempConv.to(scopedBounds.temperature.high as number) }), [scopedBounds.temperature, tempConv]);
 
   const phPanelData = useMemo(() => phSeries.map(d => ({ t: d.time, v: d.value, avg: d.avg })), [phSeries]);
-  const h2oConv = useMemo(() => h2oConverters(params.h2o.unit), [params.h2o.unit]);
+  const h2oConv = useMemo(() => h2oConverters(scopedParams.h2o.unit), [scopedParams.h2o.unit]);
   const h2oPanelData = useMemo(() => {
-    const now = Date.now();
-    if (h2oRange === 'specific') {
-      const data = doseRateHistory.filter(p => p.t >= specStart && p.t <= specEnd).map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }));
-      const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3)) : null;
-      return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: avg != null ? h2oConv.to(avg) : undefined }));
-    }
-    let start = now - 3*60*60*1000;
-    if (h2oRange==='1d') start = now - 24*60*60*1000;
-    else if (h2oRange==='7d') start = now - 7*24*60*60*1000;
-    else if (h2oRange==='1m') start = now - 30*24*60*60*1000;
-    else if (h2oRange==='3m') start = now - 90*24*60*60*1000;
-    else if (h2oRange==='all') start = 0;
-    const data = doseRateHistory.filter(p=>p.t>=start).map(p => ({ t: p.t, v: Number(p.v.toFixed(3)) }));
-    const avg = data.length ? Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3)) : null;
-    return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: avg != null ? h2oConv.to(avg) : undefined }));
-  }, [doseRateHistory, h2oRange, h2oConv, specStart, specEnd]);
+    const src = (h2oDb || []).map(p => ({ t: Number(p.t), v: Number(p.v) }));
+    const data = filterByRange(src, h2oRange);
+    if (!data.length) return [] as { t:number; v:number; avg?: number }[];
+    const avg = Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3));
+    return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: h2oConv.to(avg) }));
+  }, [h2oDb, h2oRange, h2oConv, specStart, specEnd, densRange, viscRange, tempRange, phRange]);
   const h2oYConv = useMemo(() => [h2oConv.to(0), h2oConv.to(0.05)] as [number, number], [h2oConv]);
-  const h2oBoundsConv = useMemo(() => ({ low: bounds.h2o.low==null?null:h2oConv.to(bounds.h2o.low as number), high: bounds.h2o.high==null?null:h2oConv.to(bounds.h2o.high as number) }), [bounds.h2o, h2oConv]);
+  const h2oBoundsConv = useMemo(() => ({ low: scopedBounds.h2o.low==null?null:h2oConv.to(scopedBounds.h2o.low as number), high: scopedBounds.h2o.high==null?null:h2oConv.to(scopedBounds.h2o.high as number) }), [scopedBounds.h2o, h2oConv]);
 
-  const pcConv = useMemo(() => pcConverters(params.pc.unit), [params.pc.unit]);
+  const pcConv = useMemo(() => pcConverters(scopedParams.pc.unit), [scopedParams.pc.unit]);
   const pcHistData = useMemo(() => {
+    const source = pcDb || [];
+    if (!source.length) return [] as any[];
     const now = Date.now();
     if (pcRange === 'specific') {
-      return coverPowerHistory.filter(p => p.t >= specStart && p.t <= specEnd);
+      return (source as any[]).filter((p:any) => p.t >= specStart && p.t <= specEnd);
     }
     const ms = pcRange === '7d' ? 7*24*60*60*1000 : pcRange === '1m' ? 30*24*60*60*1000 : pcRange === '3m' ? 90*24*60*60*1000 : 365*24*60*60*1000;
     const start = now - ms;
-    return coverPowerHistory.filter(p => p.t >= start);
-  }, [coverPowerHistory, pcRange, specStart, specEnd]);
+    return (source as any[]).filter((p:any) => p.t >= start);
+  }, [pcDb, pcRange, specStart, specEnd]);
   const pcPanelData = useMemo(() => {
     const avg = pcHistData.length ? Number((pcHistData.reduce((s,d)=>s+d.v,0)/pcHistData.length).toFixed(3)) : null;
     return pcHistData.map(d => ({ t: d.t, v: pcConv.to(d.v), avg: avg != null ? pcConv.to(avg) : undefined }));
   }, [pcHistData, pcConv]);
-  const pcBoundsConv = useMemo(() => ({ low: (bounds.pc?.low==null)?null:pcConv.to(bounds.pc.low as number), high: (bounds.pc?.high==null)?null:pcConv.to(bounds.pc.high as number) }), [bounds.pc, pcConv]);
+  const pcBoundsConv = useMemo(() => ({ low: (scopedBounds.pc?.low==null)?null:pcConv.to(scopedBounds.pc.low as number), high: (scopedBounds.pc?.high==null)?null:pcConv.to(scopedBounds.pc.high as number) }), [scopedBounds.pc, pcConv]);
 
   const pcYStats = useMemo(() => {
     if (!pcHistData.length) return { min: 0, max: 0 };
@@ -293,22 +336,22 @@ export default function Detail() {
             specificEnd={specificEnd}
             setSpecificStart={setSpecificStart}
             setSpecificEnd={setSpecificEnd}
-            onSetRangeSpecific={() => setH2oRange('specific')}
-            unit={params.h2o.unit}
+            onSetRangeSpecific={() => { setH2oRange('specific'); localStorage.setItem(`range:${id}:h2o`, 'specific'); }}
+            unit={scopedParams.h2o.unit}
             unitOptions={["L/h","L/day","mL/min","mL/s"]}
-            setUnit={(u)=> setParams('h2o', { unit: u })}
-            avgOn={params.h2o.avgOn}
-            setAvgOn={(v)=> setParams('h2o', { avgOn: v })}
-            trendOn={params.h2o.trendOn}
-            setTrendOn={(v)=> setParams('h2o', { trendOn: v })}
-              trendSegPct={params.h2o.trendSegPct}
-              setTrendSegPct={(n)=> setParams('h2o', { trendSegPct: n })}
-            deltaY={params.h2o.deltaY}
-            setDeltaY={(n)=> setParams('h2o', { deltaY: n })}
-            low={bounds.h2o.low}
-            high={bounds.h2o.high}
-            setLow={(n)=> setBounds('h2o', { ...bounds.h2o, low: n })}
-            setHigh={(n)=> setBounds('h2o', { ...bounds.h2o, high: n })}
+            setUnit={(u)=> setScoped('h2o', { unit: u })}
+            avgOn={scopedParams.h2o.avgOn}
+            setAvgOn={(v)=> setScoped('h2o', { avgOn: v })}
+            trendOn={scopedParams.h2o.trendOn}
+            setTrendOn={(v)=> setScoped('h2o', { trendOn: v })}
+              trendSegPct={scopedParams.h2o.trendSegPct}
+              setTrendSegPct={(n)=> setScoped('h2o', { trendSegPct: n })}
+            deltaY={scopedParams.h2o.deltaY}
+            setDeltaY={(n)=> setScoped('h2o', { deltaY: n })}
+            low={scopedBounds.h2o.low}
+            high={scopedBounds.h2o.high}
+            setLow={(n)=> setBoundsFor(id || '', 'h2o', { ...scopedBounds.h2o, low: n })}
+            setHigh={(n)=> setBoundsFor(id || '', 'h2o', { ...scopedBounds.h2o, high: n })}
             critOn={h2oCritOn}
             setCritOn={setH2oCritOn}
             critPct={h2oCritPct}
@@ -325,7 +368,7 @@ export default function Detail() {
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                  <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => setDensRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                  <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => { setDensRange(r); localStorage.setItem(`range:${id}:densite`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
                 <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('densite')}>…</button>
               </div>
@@ -338,22 +381,22 @@ export default function Detail() {
               specificEnd={specificEnd}
               setSpecificStart={setSpecificStart}
               setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={() => setDensRange('specific')}
-              unit={params.densite.unit}
+              onSetRangeSpecific={() => { setDensRange('specific'); localStorage.setItem(`range:${id}:densite`, 'specific'); }}
+              unit={scopedParams.densite.unit}
               unitOptions={["kg/m³","g/cm³","g/mL","kg/L","g/L","mg/mL"]}
-              setUnit={(u)=> setParams('densite', { unit: u })}
-              avgOn={params.densite.avgOn}
-              setAvgOn={(v)=> setParams('densite', { avgOn: v })}
-              trendOn={params.densite.trendOn}
-              setTrendOn={(v)=> setParams('densite', { trendOn: v })}
-              trendSegPct={params.densite.trendSegPct}
-              setTrendSegPct={(n)=> setParams('densite', { trendSegPct: n })}
-              deltaY={params.densite.deltaY}
-              setDeltaY={(n)=> setParams('densite', { deltaY: n })}
-              low={bounds.densite.low}
-              high={bounds.densite.high}
-              setLow={(n)=> setBounds('densite', { ...bounds.densite, low: n })}
-              setHigh={(n)=> setBounds('densite', { ...bounds.densite, high: n })}
+              setUnit={(u)=> setScoped('densite', { unit: u })}
+              avgOn={scopedParams.densite.avgOn}
+              setAvgOn={(v)=> setScoped('densite', { avgOn: v })}
+              trendOn={scopedParams.densite.trendOn}
+              setTrendOn={(v)=> setScoped('densite', { trendOn: v })}
+              trendSegPct={scopedParams.densite.trendSegPct}
+              setTrendSegPct={(n)=> setScoped('densite', { trendSegPct: n })}
+              deltaY={scopedParams.densite.deltaY}
+              setDeltaY={(n)=> setScoped('densite', { deltaY: n })}
+              low={scopedBounds.densite.low}
+              high={scopedBounds.densite.high}
+              setLow={(n)=> setBoundsFor(id || '', 'densite', { ...scopedBounds.densite, low: n })}
+              setHigh={(n)=> setBoundsFor(id || '', 'densite', { ...scopedBounds.densite, high: n })}
               critOn={densCritOn}
               setCritOn={setDensCritOn}
               critPct={densCritPct}
@@ -417,17 +460,18 @@ export default function Detail() {
             <ResponsiveContainer>
               <MetricPanel
                 title="Densité"
-                unitLabel={params.densite.unit}
+                unitLabel={scopedParams.densite.unit}
                 data={densPanelData}
                 yDomain={densYConv as any}
-                avgOn={params.densite.avgOn}
-                trendOn={params.densite.trendOn}
-                trendSegPct={params.densite.trendSegPct}
-                deltaY={params.densite.deltaY}
+                avgOn={scopedParams.densite.avgOn}
+                trendOn={scopedParams.densite.trendOn}
+                trendSegPct={scopedParams.densite.trendSegPct}
+                deltaY={scopedParams.densite.deltaY}
                 bounds={densBoundsConv as any}
                 critPct={densCritOn ? densCritPct : undefined}
                 color="#60a5fa"
-                trendWindowMs={params.densite.trendWindowMs}
+                trendWindowMs={scopedParams.densite.trendWindowMs}
+                rangeKey={densRange}
               />
             </ResponsiveContainer>
           </div>
@@ -438,7 +482,7 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Viscosité (mPa·s)</h3>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => setViscRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => { setViscRange(r); localStorage.setItem(`range:${id}:viscosite`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('visco')}>…</button>
             </div>
@@ -450,22 +494,22 @@ export default function Detail() {
               specificEnd={specificEnd}
               setSpecificStart={setSpecificStart}
               setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> setViscRange('specific')}
-              unit={params.viscosite.unit}
+              onSetRangeSpecific={()=> { setViscRange('specific'); localStorage.setItem(`range:${id}:viscosite`, 'specific'); }}
+              unit={scopedParams.viscosite.unit}
               unitOptions={["Pa·s","mPa·s","cP","P","St","cSt","s"]}
-              setUnit={(u)=> setParams('viscosite', { unit: u })}
-              avgOn={params.viscosite.avgOn}
-              setAvgOn={(v)=> setParams('viscosite', { avgOn: v })}
-              trendOn={params.viscosite.trendOn}
-              setTrendOn={(v)=> setParams('viscosite', { trendOn: v })}
-              trendSegPct={params.viscosite.trendSegPct}
-              setTrendSegPct={(n)=> setParams('viscosite', { trendSegPct: n })}
-              deltaY={params.viscosite.deltaY}
-              setDeltaY={(n)=> setParams('viscosite', { deltaY: n })}
-              low={bounds.viscosite.low}
-              high={bounds.viscosite.high}
-              setLow={(n)=> setBounds('viscosite', { ...bounds.viscosite, low: n })}
-              setHigh={(n)=> setBounds('viscosite', { ...bounds.viscosite, high: n })}
+              setUnit={(u)=> setScoped('viscosite', { unit: u })}
+              avgOn={scopedParams.viscosite.avgOn}
+              setAvgOn={(v)=> setScoped('viscosite', { avgOn: v })}
+              trendOn={scopedParams.viscosite.trendOn}
+              setTrendOn={(v)=> setScoped('viscosite', { trendOn: v })}
+              trendSegPct={scopedParams.viscosite.trendSegPct}
+              setTrendSegPct={(n)=> setScoped('viscosite', { trendSegPct: n })}
+              deltaY={scopedParams.viscosite.deltaY}
+              setDeltaY={(n)=> setScoped('viscosite', { deltaY: n })}
+              low={scopedBounds.viscosite.low}
+              high={scopedBounds.viscosite.high}
+              setLow={(n)=> setBoundsFor(id || '', 'viscosite', { ...scopedBounds.viscosite, low: n })}
+              setHigh={(n)=> setBoundsFor(id || '', 'viscosite', { ...scopedBounds.viscosite, high: n })}
               critOn={viscCritOn}
               setCritOn={setViscCritOn}
               critPct={viscCritPct}
@@ -526,17 +570,18 @@ export default function Detail() {
             />
             <MetricPanel
               title="Viscosité"
-              unitLabel={params.viscosite.unit}
+              unitLabel={scopedParams.viscosite.unit}
               data={viscPanelData}
               yDomain={viscYConv as any}
-              avgOn={params.viscosite.avgOn}
-              trendOn={params.viscosite.trendOn}
-              trendSegPct={params.viscosite.trendSegPct}
-              deltaY={params.viscosite.deltaY}
+              avgOn={scopedParams.viscosite.avgOn}
+              trendOn={scopedParams.viscosite.trendOn}
+              trendSegPct={scopedParams.viscosite.trendSegPct}
+              deltaY={scopedParams.viscosite.deltaY}
               bounds={viscBoundsConv as any}
               critPct={viscCritOn ? viscCritPct : undefined}
               color="#34d399"
-              trendWindowMs={params.viscosite.trendWindowMs}
+              trendWindowMs={scopedParams.viscosite.trendWindowMs}
+              rangeKey={viscRange}
             />
           </div>
         </div>
@@ -546,7 +591,7 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Pouvoir couvrant - Historique (g)</h3>
             <div className="segmented">
               {(['7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => setPcRange(r)}>{r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => { setPcRange(r); localStorage.setItem(`range:${id}:pc`, r); }}>{r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('pc-hist')}>…</button>
             </div>
@@ -555,16 +600,17 @@ export default function Detail() {
             <ResponsiveContainer>
               <MetricPanel
                 title="Pouvoir couvrant"
-                unitLabel={params.pc.unit}
+                unitLabel={scopedParams.pc.unit}
                 data={pcPanelData}
-                avgOn={params.pc.avgOn}
-                trendOn={params.pc.trendOn}
-              trendSegPct={params.pc.trendSegPct}
-                deltaY={params.pc.deltaY}
+                avgOn={isOnline ? scopedParams.pc.avgOn : false}
+                trendOn={isOnline ? scopedParams.pc.trendOn : false}
+              trendSegPct={scopedParams.pc.trendSegPct}
+                deltaY={scopedParams.pc.deltaY}
                 bounds={pcBoundsConv as any}
               critPct={pcCritOn ? pcCritPct : undefined}
                 color="#38bdf8"
-                trendWindowMs={params.pc.trendWindowMs}
+                trendWindowMs={scopedParams.pc.trendWindowMs}
+                rangeKey={pcRange}
               />
             </ResponsiveContainer>
           </div>
@@ -576,22 +622,22 @@ export default function Detail() {
              specificEnd={specificEnd}
              setSpecificStart={setSpecificStart}
              setSpecificEnd={setSpecificEnd}
-             onSetRangeSpecific={()=> setPcRange('specific')}
-             unit={params.pc.unit}
+             onSetRangeSpecific={()=> { setPcRange('specific'); localStorage.setItem(`range:${id}:pc`, 'specific'); }}
+             unit={scopedParams.pc.unit}
              unitOptions={["g","g/cm²"]}
-             setUnit={(u)=> setParams('pc', { unit: u })}
-             avgOn={params.pc.avgOn}
-             setAvgOn={(v)=> setParams('pc', { avgOn: v })}
-             trendOn={params.pc.trendOn}
-             setTrendOn={(v)=> setParams('pc', { trendOn: v })}
-             trendSegPct={params.pc.trendSegPct}
-             setTrendSegPct={(n)=> setParams('pc', { trendSegPct: n })}
-             deltaY={params.pc.deltaY}
-             setDeltaY={(n)=> setParams('pc', { deltaY: n })}
-             low={bounds.pc?.low ?? null}
-             high={bounds.pc?.high ?? null}
-             setLow={(n)=> setBounds('pc', { ...(bounds.pc ?? { low: null, high: null }), low: n })}
-             setHigh={(n)=> setBounds('pc', { ...(bounds.pc ?? { low: null, high: null }), high: n })}
+             setUnit={(u)=> setScoped('pc', { unit: u })}
+             avgOn={scopedParams.pc.avgOn}
+             setAvgOn={(v)=> setScoped('pc', { avgOn: v })}
+             trendOn={scopedParams.pc.trendOn}
+             setTrendOn={(v)=> setScoped('pc', { trendOn: v })}
+             trendSegPct={scopedParams.pc.trendSegPct}
+             setTrendSegPct={(n)=> setScoped('pc', { trendSegPct: n })}
+             deltaY={scopedParams.pc.deltaY}
+             setDeltaY={(n)=> setScoped('pc', { deltaY: n })}
+             low={scopedBounds.pc?.low ?? null}
+             high={scopedBounds.pc?.high ?? null}
+             setLow={(n)=> setBoundsFor(id || '', 'pc', { ...(scopedBounds.pc ?? { low: null, high: null }), low: n })}
+             setHigh={(n)=> setBoundsFor(id || '', 'pc', { ...(scopedBounds.pc ?? { low: null, high: null }), high: n })}
              critOn={pcCritOn}
              setCritOn={setPcCritOn}
              critPct={pcCritPct}
@@ -637,7 +683,7 @@ export default function Detail() {
                   if (localSeries.length) {
                     const last = localSeries[localSeries.length - 1].v;
                     addCoverPowerResult(last);
-                    setLastPlaqueSrc('/plaque-pickup.jpg');
+                    setLastPlaqueSrc('/assets/plaque-pickup.jpg');
                   }
                 }
               }, 500);
@@ -675,21 +721,21 @@ export default function Detail() {
           <div className="panel">
             <h3>Photo de plaque</h3>
             <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <a style={{ width: 320, height: 320, cursor: 'pointer' }} href={(lastPlaqueSrc || '/plaque-pickup.jpg')} target="_blank" rel="noreferrer">
+              <div style={{ width: 320, height: 320, cursor: 'zoom-in' }} onClick={()=> setImageModal('photo')}>
                 <picture>
-                  <source srcSet={(lastPlaqueSrc || '/plaque-pickup.webp').replace('.jpg', '.webp')} type="image/webp" />
-                  <img src={lastPlaqueSrc || '/plaque-pickup.jpg'} alt="Plaque essai" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                  <source srcSet={(lastPlaqueSrc || '/assets/plaque-pickup.webp').replace('.jpg', '.webp')} type="image/webp" />
+                  <img src={lastPlaqueSrc || '/assets/plaque-pickup.jpg'} alt="Plaque essai" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                 </picture>
-              </a>
+              </div>
             </div>
           </div>
           <div className="panel">
             <h3>Analyse IA</h3>
             <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <a style={{ width: 320, height: 320, cursor: 'pointer', position: 'relative' }} href={'/plaque-pickup_analysed.webp'} target="_blank" rel="noreferrer">
+              <div style={{ width: 320, height: 320, cursor: 'zoom-in', position: 'relative' }} onClick={()=> setImageModal('ai')}>
                 <picture>
-                  <source srcSet={'/plaque-pickup_analysed.webp'} type="image/webp" />
-                  <img src={'/plaque-pickup_analysed.webp'} alt="Plaque analysée" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                  <source srcSet={'/assets/plaque-pickup_analysed.webp'} type="image/webp" />
+                  <img src={'/assets/plaque-pickup_analysed.webp'} alt="Plaque analysée" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                 </picture>
                 <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(16,22,83,0.9)', color: '#e5e7eb', padding: '6px 8px', borderRadius: 6, fontSize: 12, lineHeight: 1.2 }}>
                   <div><strong>Count :</strong> 209</div>
@@ -699,7 +745,7 @@ export default function Detail() {
                   <div style={{ width: 64, height: 6, background: '#ffffff', borderRadius: 3, marginLeft: 'auto' }} />
                   <div style={{ fontSize: 12, marginTop: 4 }}>0.8 cm</div>
                 </div>
-              </a>
+              </div>
             </div>
           </div>
         </div>
@@ -711,19 +757,28 @@ export default function Detail() {
             <div className="modal-header">
               <h3 style={{ margin: 0 }}>{imageModal === 'photo' ? 'Photo de plaque' : 'Analyse IA'}</h3>
               <div className="row" style={{ gap: 8 }}>
-                <a className="dropdown-item" href={imageModal === 'ai' ? '/plaque-pickup_analysed.webp' : (lastPlaqueSrc || '/plaque-pickup.jpg')} target="_blank" rel="noreferrer">Ouvrir dans un nouvel onglet</a>
                 <button onClick={() => setImageModal(null)}>Fermer</button>
               </div>
             </div>
             <div className="modal-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <picture>
-                {imageModal === 'ai' ? (
-                  <source srcSet={'/plaque-pickup_analysed.webp'} type="image/webp" />
-                ) : (
-                  <source srcSet={(lastPlaqueSrc || '/plaque-pickup.webp').replace('.jpg', '.webp')} type="image/webp" />
-                )}
-                <img src={imageModal === 'ai' ? '/plaque-pickup_analysed.webp' : (lastPlaqueSrc || '/plaque-pickup.jpg')} alt={imageModal === 'ai' ? 'Plaque analysée' : 'Plaque essai'} style={{ maxWidth: '95vw', maxHeight: '80vh', borderRadius: 8, border: '1px solid var(--border)' }} />
-              </picture>
+              <div style={{ position: 'relative', overflow: 'hidden' }}>
+                <img
+                  src={imageModal === 'ai' ? '/assets/plaque-pickup_analysed.webp' : (lastPlaqueSrc || '/assets/plaque-pickup.jpg')}
+                  alt={imageModal === 'ai' ? 'Plaque analysée' : 'Plaque essai'}
+                  style={{ maxWidth: '95vw', maxHeight: '80vh', borderRadius: 8, border: '1px solid var(--border)', cursor: 'zoom-in' }}
+                  onClick={(e)=>{
+                    const el = e.currentTarget as HTMLImageElement;
+                    const isZoomed = el.style.transform && el.style.transform !== '';
+                    if (!isZoomed) {
+                      el.style.transformOrigin = `${e.nativeEvent.offsetX}px ${e.nativeEvent.offsetY}px`;
+                      el.style.transform = 'scale(1.8)';
+                    } else {
+                      el.style.transform = '';
+                    }
+                    el.style.transition = 'transform 180ms ease';
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -738,7 +793,7 @@ export default function Detail() {
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                  <button key={r} className={`seg-btn ${tempRange===r?'active':''}`} onClick={() => setTempRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                  <button key={r} className={`seg-btn ${tempRange===r?'active':''}`} onClick={() => { setTempRange(r); localStorage.setItem(`range:${id}:temperature`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
                 <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('temp')}>…</button>
               </div>
@@ -751,22 +806,22 @@ export default function Detail() {
               specificEnd={specificEnd}
               setSpecificStart={setSpecificStart}
               setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> setTempRange('specific')}
-              unit={params.temperature.unit}
+              onSetRangeSpecific={()=> { setTempRange('specific'); localStorage.setItem(`range:${id}:temperature`, 'specific'); }}
+              unit={scopedParams.temperature.unit}
               unitOptions={["°C","°F","K"]}
-              setUnit={(u)=> setParams('temperature', { unit: u })}
-              avgOn={params.temperature.avgOn}
-              setAvgOn={(v)=> setParams('temperature', { avgOn: v })}
-              trendOn={params.temperature.trendOn}
-              setTrendOn={(v)=> setParams('temperature', { trendOn: v })}
-              trendSegPct={params.temperature.trendSegPct}
-              setTrendSegPct={(n)=> setParams('temperature', { trendSegPct: n })}
-              deltaY={params.temperature.deltaY}
-              setDeltaY={(n)=> setParams('temperature', { deltaY: n })}
-              low={bounds.temperature.low}
-              high={bounds.temperature.high}
-              setLow={(n)=> setBounds('temperature', { ...bounds.temperature, low: n })}
-              setHigh={(n)=> setBounds('temperature', { ...bounds.temperature, high: n })}
+              setUnit={(u)=> setScoped('temperature', { unit: u })}
+              avgOn={scopedParams.temperature.avgOn}
+              setAvgOn={(v)=> setScoped('temperature', { avgOn: v })}
+              trendOn={scopedParams.temperature.trendOn}
+              setTrendOn={(v)=> setScoped('temperature', { trendOn: v })}
+              trendSegPct={scopedParams.temperature.trendSegPct}
+              setTrendSegPct={(n)=> setScoped('temperature', { trendSegPct: n })}
+              deltaY={scopedParams.temperature.deltaY}
+              setDeltaY={(n)=> setScoped('temperature', { deltaY: n })}
+              low={scopedBounds.temperature.low}
+              high={scopedBounds.temperature.high}
+              setLow={(n)=> setBoundsFor(id || '', 'temperature', { ...scopedBounds.temperature, low: n })}
+              setHigh={(n)=> setBoundsFor(id || '', 'temperature', { ...scopedBounds.temperature, high: n })}
               critOn={tempCritOn}
               setCritOn={setTempCritOn}
               critPct={tempCritPct}
@@ -827,17 +882,18 @@ export default function Detail() {
             />
             <MetricPanel
               title="Température"
-              unitLabel={params.temperature.unit}
+              unitLabel={scopedParams.temperature.unit}
               data={tempPanelData}
               yDomain={tempYConv as any}
-              avgOn={params.temperature.avgOn}
-              trendOn={params.temperature.trendOn}
-              trendSegPct={params.temperature.trendSegPct}
-              deltaY={params.temperature.deltaY}
+              avgOn={scopedParams.temperature.avgOn}
+              trendOn={scopedParams.temperature.trendOn}
+              trendSegPct={scopedParams.temperature.trendSegPct}
+              deltaY={scopedParams.temperature.deltaY}
               bounds={tempBoundsConv as any}
               critPct={tempCritOn ? tempCritPct : undefined}
               color="#f59e0b"
-              trendWindowMs={params.temperature.trendWindowMs}
+              trendWindowMs={scopedParams.temperature.trendWindowMs}
+              rangeKey={tempRange}
             />
           </div>
         </div>
@@ -847,7 +903,7 @@ export default function Detail() {
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
               <div className="segmented">
                 {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                  <button key={r} className={`seg-btn ${phRange===r?'active':''}`} onClick={() => setPhRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                  <button key={r} className={`seg-btn ${phRange===r?'active':''}`} onClick={() => { setPhRange(r); localStorage.setItem(`range:${id}:ph`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
                 ))}
                 <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('ph')}>…</button>
               </div>
@@ -860,22 +916,22 @@ export default function Detail() {
               specificEnd={specificEnd}
               setSpecificStart={setSpecificStart}
               setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> setPhRange('specific')}
-              unit={params.ph.unit}
+              onSetRangeSpecific={()=> { setPhRange('specific'); localStorage.setItem(`range:${id}:ph`, 'specific'); }}
+              unit={scopedParams.ph.unit}
               unitOptions={["(-)"]}
-              setUnit={(u)=> setParams('ph', { unit: u })}
-              avgOn={params.ph.avgOn}
-              setAvgOn={(v)=> setParams('ph', { avgOn: v })}
-              trendOn={params.ph.trendOn}
-              setTrendOn={(v)=> setParams('ph', { trendOn: v })}
-              trendSegPct={params.ph.trendSegPct}
-              setTrendSegPct={(n)=> setParams('ph', { trendSegPct: n })}
-              deltaY={params.ph.deltaY}
-              setDeltaY={(n)=> setParams('ph', { deltaY: n })}
-              low={bounds.ph.low}
-              high={bounds.ph.high}
-              setLow={(n)=> setBounds('ph', { ...bounds.ph, low: n })}
-              setHigh={(n)=> setBounds('ph', { ...bounds.ph, high: n })}
+              setUnit={(u)=> setScoped('ph', { unit: u })}
+              avgOn={scopedParams.ph.avgOn}
+              setAvgOn={(v)=> setScoped('ph', { avgOn: v })}
+              trendOn={scopedParams.ph.trendOn}
+              setTrendOn={(v)=> setScoped('ph', { trendOn: v })}
+              trendSegPct={scopedParams.ph.trendSegPct}
+              setTrendSegPct={(n)=> setScoped('ph', { trendSegPct: n })}
+              deltaY={scopedParams.ph.deltaY}
+              setDeltaY={(n)=> setScoped('ph', { deltaY: n })}
+              low={scopedBounds.ph.low}
+              high={scopedBounds.ph.high}
+              setLow={(n)=> setBoundsFor(id || '', 'ph', { ...scopedBounds.ph, low: n })}
+              setHigh={(n)=> setBoundsFor(id || '', 'ph', { ...scopedBounds.ph, high: n })}
               critOn={phCritOn}
               setCritOn={setPhCritOn}
               critPct={phCritPct}
@@ -936,17 +992,18 @@ export default function Detail() {
             />
             <MetricPanel
               title="pH"
-              unitLabel={params.ph.unit}
+              unitLabel={scopedParams.ph.unit}
               data={phSeries.map(d=>({ t: d.time, v: d.value, avg: d.avg }))}
               yDomain={phY as any}
-              avgOn={params.ph.avgOn}
-              trendOn={params.ph.trendOn}
-              trendSegPct={params.ph.trendSegPct}
-              deltaY={params.ph.deltaY}
-              bounds={{ low: bounds.ph.low, high: bounds.ph.high } as any}
+              avgOn={scopedParams.ph.avgOn}
+              trendOn={scopedParams.ph.trendOn}
+              trendSegPct={scopedParams.ph.trendSegPct}
+              deltaY={scopedParams.ph.deltaY}
+              bounds={{ low: scopedBounds.ph.low, high: scopedBounds.ph.high } as any}
               critPct={phCritOn ? phCritPct : undefined}
               color="#8b5cf6"
-              trendWindowMs={params.ph.trendWindowMs}
+              trendWindowMs={scopedParams.ph.trendWindowMs}
+              rangeKey={phRange}
             />
           </div>
         </div>
@@ -958,7 +1015,7 @@ export default function Detail() {
             <h3>Débit H₂O — Historique (L/h)</h3>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => setH2oRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => { setH2oRange(r); localStorage.setItem(`range:${id}:h2o`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('h2o')}>…</button>
             </div>
@@ -967,17 +1024,18 @@ export default function Detail() {
             <ResponsiveContainer>
               <MetricPanel
                 title="Débit H₂O"
-                unitLabel={params.h2o.unit}
+              unitLabel={scopedParams.h2o.unit}
                 data={h2oPanelData}
                 yDomain={h2oYConv as any}
-                avgOn={params.h2o.avgOn}
-                trendOn={params.h2o.trendOn}
-                trendSegPct={params.h2o.trendSegPct}
-                deltaY={params.h2o.deltaY}
-                bounds={h2oBoundsConv as any}
-                critPct={h2oCritOn ? h2oCritPct : undefined}
+                avgOn={isOnline ? scopedParams.h2o.avgOn : false}
+                trendOn={isOnline ? scopedParams.h2o.trendOn : false}
+                trendSegPct={scopedParams.h2o.trendSegPct}
+                deltaY={scopedParams.h2o.deltaY}
+                bounds={isOnline ? (h2oBoundsConv as any) : undefined}
+                critPct={isOnline && h2oCritOn ? h2oCritPct : undefined}
                 color="#3b82f6"
-                trendWindowMs={params.h2o.trendWindowMs}
+                trendWindowMs={scopedParams.h2o.trendWindowMs}
+                rangeKey={h2oRange}
               />
             </ResponsiveContainer>
           </div>
@@ -1000,7 +1058,7 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Silice (%)</h3>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${siliceRange===r?'active':''}`} onClick={() => setSiliceRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${siliceRange===r?'active':''}`} onClick={() => { setSiliceRange(r); localStorage.setItem(`range:${id}:silice`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('silice')}>…</button>
             </div>
@@ -1012,20 +1070,20 @@ export default function Detail() {
               specificEnd={specificEnd}
               setSpecificStart={setSpecificStart}
               setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> setSiliceRange('specific')}
-              unit={params.silice.unit}
+              onSetRangeSpecific={()=> { setSiliceRange('specific'); localStorage.setItem(`range:${id}:silice`, 'specific'); }}
+              unit={scopedParams.silice.unit}
               unitOptions={["%"]}
               setUnit={(u)=> setParams('silice', { unit: u })}
-              avgOn={params.silice.avgOn}
+              avgOn={scopedParams.silice.avgOn}
               setAvgOn={(v)=> setParams('silice', { avgOn: v })}
-              trendOn={params.silice.trendOn}
+              trendOn={scopedParams.silice.trendOn}
               setTrendOn={(v)=> setParams('silice', { trendOn: v })}
-              deltaY={params.silice.deltaY}
+              deltaY={scopedParams.silice.deltaY}
               setDeltaY={(n)=> setParams('silice', { deltaY: n })}
-              low={bounds.silice.low}
-              high={bounds.silice.high}
-              setLow={(n)=> setBounds('silice', { ...bounds.silice, low: n })}
-              setHigh={(n)=> setBounds('silice', { ...bounds.silice, high: n })}
+              low={scopedBounds.silice.low}
+              high={scopedBounds.silice.high}
+              setLow={(n)=> setBoundsFor(id || '', 'silice', { ...scopedBounds.silice, low: n })}
+              setHigh={(n)=> setBoundsFor(id || '', 'silice', { ...scopedBounds.silice, high: n })}
               critOn={siliceCritOn}
               setCritOn={setSiliceCritOn}
               critPct={siliceCritPct}
@@ -1037,13 +1095,14 @@ export default function Detail() {
             <ResponsiveContainer>
               <MetricPanel
                 title="Silice"
-                unitLabel={params.silice.unit}
+                unitLabel={scopedParams.silice.unit}
                 data={[]}
-                avgOn={params.silice.avgOn}
-                trendOn={params.silice.trendOn}
-                deltaY={params.silice.deltaY}
+                avgOn={scopedParams.silice.avgOn}
+                trendOn={scopedParams.silice.trendOn}
+                deltaY={scopedParams.silice.deltaY}
                 color="#a78bfa"
-                trendWindowMs={params.silice.trendWindowMs}
+                trendWindowMs={scopedParams.silice.trendWindowMs}
+                rangeKey={siliceRange}
               />
             </ResponsiveContainer>
           </div>
@@ -1053,7 +1112,7 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Grains (%)</h3>
             <div className="segmented">
               {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${grainsRange===r?'active':''}`} onClick={() => setGrainsRange(r)}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                <button key={r} className={`seg-btn ${grainsRange===r?'active':''}`} onClick={() => { setGrainsRange(r); localStorage.setItem(`range:${id}:grains`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('grains')}>…</button>
             </div>
@@ -1065,20 +1124,20 @@ export default function Detail() {
               specificEnd={specificEnd}
               setSpecificStart={setSpecificStart}
               setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> setGrainsRange('specific')}
-              unit={params.grains.unit}
+              onSetRangeSpecific={()=> { setGrainsRange('specific'); localStorage.setItem(`range:${id}:grains`, 'specific'); }}
+              unit={scopedParams.grains.unit}
               unitOptions={["%"]}
               setUnit={(u)=> setParams('grains', { unit: u })}
-              avgOn={params.grains.avgOn}
+              avgOn={scopedParams.grains.avgOn}
               setAvgOn={(v)=> setParams('grains', { avgOn: v })}
-              trendOn={params.grains.trendOn}
+              trendOn={scopedParams.grains.trendOn}
               setTrendOn={(v)=> setParams('grains', { trendOn: v })}
-              deltaY={params.grains.deltaY}
+              deltaY={scopedParams.grains.deltaY}
               setDeltaY={(n)=> setParams('grains', { deltaY: n })}
-              low={bounds.grains.low}
-              high={bounds.grains.high}
-              setLow={(n)=> setBounds('grains', { ...bounds.grains, low: n })}
-              setHigh={(n)=> setBounds('grains', { ...bounds.grains, high: n })}
+              low={scopedBounds.grains.low}
+              high={scopedBounds.grains.high}
+              setLow={(n)=> setBoundsFor(id || '', 'grains', { ...scopedBounds.grains, low: n })}
+              setHigh={(n)=> setBoundsFor(id || '', 'grains', { ...scopedBounds.grains, high: n })}
               critOn={grainsCritOn}
               setCritOn={setGrainsCritOn}
               critPct={grainsCritPct}
@@ -1090,13 +1149,14 @@ export default function Detail() {
             <ResponsiveContainer>
               <MetricPanel
                 title="Grains"
-                unitLabel={params.grains.unit}
+                unitLabel={scopedParams.grains.unit}
                 data={[]}
-                avgOn={params.grains.avgOn}
-                trendOn={params.grains.trendOn}
-                deltaY={params.grains.deltaY}
+                avgOn={scopedParams.grains.avgOn}
+                trendOn={scopedParams.grains.trendOn}
+                deltaY={scopedParams.grains.deltaY}
                 color="#60a5fa"
-                trendWindowMs={params.grains.trendWindowMs}
+                trendWindowMs={scopedParams.grains.trendWindowMs}
+                rangeKey={grainsRange}
               />
             </ResponsiveContainer>
           </div>

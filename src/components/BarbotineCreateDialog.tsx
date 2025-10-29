@@ -11,12 +11,16 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
   const [step, setStep] = useState<'form' | 'confirm'>('form');
   const [name, setName] = useState<string>('');
   const [type, setType] = useState<string>('M7-3');
-  const [metrics, setMetrics] = useState<{ densite: boolean; viscosite: boolean; temperature: boolean; ph: boolean; pc: boolean }>(() => ({
+  const [customType, setCustomType] = useState<string>('');
+  const [metrics, setMetrics] = useState<{ densite: boolean; viscosite: boolean; temperature: boolean; ph: boolean; pc: boolean; h2o: boolean; silice: boolean; grains: boolean }>(() => ({
     densite: true,
     viscosite: true,
-    temperature: true,
-    ph: true,
     pc: true,
+    h2o: true,
+    ph: true,
+    temperature: true,
+    silice: true,
+    grains: true,
   }));
   const [modes, setModes] = useState<BarbotineConfig['modes']>({
     densite: 'manuel',
@@ -27,15 +31,14 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
 
   const valid = useMemo(() => {
     const hasName = !!name.trim();
-    const anyMetric = Object.values(metrics).some(Boolean);
-    return hasName && anyMetric;
-  }, [name, metrics]);
+    return hasName;
+  }, [name]);
 
   if (!p.open) return null;
 
   function renderForm() {
     return (
-      <div className="modal-body">
+      <form className="modal-body" style={{ display: 'grid', gap: 12 }} onSubmit={(e)=> { e.preventDefault(); setStep('confirm'); }}>
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <label>Nom de la barbotine</label>
           <input style={{ minWidth: 260 }} type="text" placeholder="Ex: M7-3 009" value={name} onChange={e=> setName(e.target.value)} />
@@ -48,14 +51,19 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
             <option value="R55">R55</option>
             <option value="Custom">Custom</option>
           </select>
+          {type === 'Custom' && (
+            <input style={{ minWidth: 180 }} type="text" placeholder="Type personnalisé" value={customType} onChange={e=> setCustomType(e.target.value)} />
+          )}
         </div>
         <div style={{ marginTop: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Métriques</div>
           <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
-            {(['densite','viscosite','temperature','ph','pc'] as const).map(key => (
+            {(['densite','viscosite','pc','h2o','ph','temperature','silice','grains'] as const).map(key => (
               <label key={key} className="row" style={{ gap: 6, alignItems: 'center' }}>
                 <input type="checkbox" checked={(metrics as any)[key]} onChange={e=> setMetrics(prev => ({ ...prev, [key]: e.target.checked }))} />
-                <span style={{ textTransform: 'capitalize' }}>{key === 'pc' ? 'pouvoir couvrant' : key}</span>
+                <span style={{ textTransform: 'capitalize' }}>
+                  {key==='pc'?'pouvoir couvrant': key==='h2o'?'H2O': key}
+                </span>
               </label>
             ))}
           </div>
@@ -92,26 +100,25 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
           )}
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button className="borderline" onClick={p.onClose}>Annuler</button>
-          <button className="primary" disabled={!valid} onClick={()=> setStep('confirm')}>Continuer</button>
+          <button type="submit" className="primary" disabled={!valid}>Continuer</button>
         </div>
-      </div>
+      </form>
     );
   }
 
   function renderConfirm() {
-    const cfg: BarbotineConfig = { type, metrics, modes };
+    const cfg: BarbotineConfig = { type: (type==='Custom' ? (customType.trim() || 'Custom') : type), metrics, modes };
     return (
-      <div className="modal-body">
-        <div style={{ marginBottom: 8 }}>
+      <div className="modal-body" style={{ display: 'grid', gap: 12 }}>
+        <div>
           <div className="muted">Nom</div>
           <div><strong>{name.trim()}</strong></div>
         </div>
-        <div style={{ marginBottom: 8 }}>
+        <div>
           <div className="muted">Type</div>
-          <div>{type}</div>
+          <div>{cfg.type}</div>
         </div>
-        <div style={{ marginBottom: 8 }}>
+        <div>
           <div className="muted">Métriques</div>
           <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
             {Object.entries(metrics).filter(([,on])=>on).map(([k])=> (
@@ -119,7 +126,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
             ))}
           </div>
         </div>
-        <div style={{ marginBottom: 8 }}>
+        <div>
           <div className="muted">Modes</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', rowGap: 4, columnGap: 8 }}>
             {metrics.densite && <><div>Densité</div><div>{modes.densite==='manuel'?'manuel':`Rheonics ${String(modes.densite).toUpperCase()}`}</div></>}
@@ -129,8 +136,8 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
           </div>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button onClick={()=> setStep('form')}>Modifier</button>
-          <button className="primary" onClick={()=> { p.onConfirm(name.trim(), cfg); p.onClose(); }}>Confirmer</button>
+          <button type="button" onClick={()=> setStep('form')}>Modifier</button>
+          <button type="button" className="primary" onClick={()=> { p.onConfirm(name.trim(), cfg); p.onClose(); }}>Confirmer</button>
         </div>
       </div>
     );
@@ -138,10 +145,12 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
 
   return (
     <div className="modal-backdrop" onClick={p.onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '95vw' }}>
+        <div className="modal-header" style={{ alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>Ajouter une barbotine</h3>
-          <button onClick={p.onClose}>Fermer</button>
+          <button onClick={p.onClose} aria-label="Fermer" title="Fermer" className="icon-btn" style={{ width: 36, height: 36, lineHeight: 0, fontSize: 22, fontWeight: 600, cursor: 'pointer' }}>
+            ×
+          </button>
         </div>
         {step==='form' ? renderForm() : renderConfirm()}
       </div>

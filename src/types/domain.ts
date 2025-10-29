@@ -20,6 +20,9 @@ export type BarbotineConfig = {
     temperature: boolean;
     ph: boolean;
     pc: boolean; // pouvoir couvrant
+    h2o: boolean;
+    silice: boolean;
+    grains: boolean;
   };
   modes: {
     densite?: 'manuel' | 'x276' | 'x277' | 'x278';
@@ -35,6 +38,7 @@ export type Barbotine = {
   online: boolean;
   last: { densite: number; viscosite: number; ph: number; temperature: number } | null;
   config?: BarbotineConfig;
+  slurryId?: string;
 };
 
 export type MetricKey = keyof MetricsSeries;

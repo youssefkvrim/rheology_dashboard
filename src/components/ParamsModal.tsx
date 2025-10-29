@@ -30,6 +30,11 @@ export type ParamsModalProps = {
   critPct?: number;
   setCritPct?: (n: number) => void;
   onClose: () => void;
+  // Interpolation controls
+  interpOn?: boolean;
+  setInterpOn?: (v: boolean) => void;
+  interpMode?: 'linear' | 'lagrange3';
+  setInterpMode?: (m: 'linear' | 'lagrange3') => void;
 };
 
 export function ParamsModal(p: ParamsModalProps) {
@@ -77,16 +82,16 @@ export function ParamsModal(p: ParamsModalProps) {
                 const raw = e.target.value;
                 setDraftLow(raw);
                 const n = parseLocaleNumber(raw);
-                if (n === null) { p.setLow(null); }
-                else if (!Number.isNaN(n)) { p.setLow(n as number); }
+                if (n === null) { p.setLow && p.setLow(null); }
+                else if (!Number.isNaN(n)) { p.setLow && p.setLow(n as number); }
               }} />
             <input type="text" inputMode="decimal" placeholder="max (ex: 1,2)" style={{ width: 110 }} value={draftHigh}
               onChange={e => {
                 const raw = e.target.value;
                 setDraftHigh(raw);
                 const n = parseLocaleNumber(raw);
-                if (n === null) { p.setHigh(null); }
-                else if (!Number.isNaN(n)) { p.setHigh(n as number); }
+                if (n === null) { p.setHigh && p.setHigh(null); }
+                else if (!Number.isNaN(n)) { p.setHigh && p.setHigh(n as number); }
               }} />
           </div>
           <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
@@ -133,6 +138,16 @@ export function ParamsModal(p: ParamsModalProps) {
             <label>ΔY (erreur)</label>
             <input type="number" step={1} value={p.deltaY} onChange={e=>p.setDeltaY(Number(e.target.value))} style={{ width: 120 }} />
           </div>
+          {p.setInterpOn && (
+            <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <label>Interpolation au survol</label>
+              <input type="checkbox" checked={!!p.interpOn} onChange={e=>p.setInterpOn!(e.target.checked)} />
+              <select value={p.interpMode || 'linear'} onChange={e=>p.setInterpMode && p.setInterpMode(e.target.value as any)}>
+                <option value="linear">Linéaire</option>
+                <option value="lagrange3">Lagrange (3 pts)</option>
+              </select>
+            </div>
+          )}
         </div>
       </div>
     </div>

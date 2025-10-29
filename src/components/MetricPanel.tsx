@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ErrorBar, ReferenceLine, ReferenceDot } from 'recharts';
 
 export type MetricPanelProps = {
@@ -14,10 +14,17 @@ export type MetricPanelProps = {
   color?: string;
   trendWindowMs?: number; // compute trend using only last window
   trendSegPct?: number; // 10..100 segmentation percentage across X axis
+  rangeKey?: '3h' | '1d' | '7d' | '1m' | '3m' | 'all' | 'specific';
+  // Hover interpolation
+  interpOn?: boolean;
+  interpMode?: 'linear' | 'lagrange3';
 };
 
 export function MetricPanel(p: MetricPanelProps) {
   const [hoverTs, setHoverTs] = useState<number | null>(null);
+  const xRectRef = useRef<{ x:number; width:number } | null>(null);
+  const xDomainRef = useRef<[number, number] | null>(null);
+  const xScaleRef = useRef<any>(null);
   function niceStep(span: number): number {
     if (!isFinite(span) || span <= 0) return 1;
     const k = Math.floor(Math.log10(span));
@@ -33,7 +40,57 @@ export function MetricPanel(p: MetricPanelProps) {
     return s.replace(/\.0+$/,'').replace(/(\.[0-9]*?[1-9])0+$/,'$1');
   }
 
-  // Compute X domain, ticks count and label formatter based on time span
+  // Interpolation helpers for hover
+  function interpolateLinear(ts: number): number | null {
+    const arr = p.data;
+    if (!arr || arr.length === 0) return null;
+    if (arr.length === 1) return typeof arr[0].v === 'number' ? arr[0].v : null;
+    if (ts <= arr[0].t) return arr[0].v;
+    if (ts >= arr[arr.length - 1].t) return arr[arr.length - 1].v;
+    let lo = 0, hi = arr.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid].t <= ts) lo = mid; else hi = mid;
+    }
+    const a = arr[lo];
+    const b = arr[hi];
+    const span = Math.max(1, b.t - a.t);
+    const ratio = Math.max(0, Math.min(1, (ts - a.t) / span));
+    return a.v + (b.v - a.v) * ratio;
+  }
+
+  // 3-point Lagrange interpolation around ts (uses nearest 3 samples)
+  function interpolateLagrange3(ts: number): number | null {
+    const arr = p.data;
+    if (!arr || arr.length === 0) return null;
+    if (arr.length < 3) return interpolateLinear(ts);
+    // find closest index
+    let idx = 0; let best = Math.abs(arr[0].t - ts);
+    for (let i = 1; i < arr.length; i++) {
+      const diff = Math.abs(arr[i].t - ts);
+      if (diff < best) { best = diff; idx = i; }
+    }
+    const i0 = Math.max(0, Math.min(arr.length - 3, idx - 1));
+    const pts = [arr[i0], arr[i0 + 1], arr[i0 + 2]];
+    const x0 = pts[0].t, y0 = pts[0].v;
+    const x1 = pts[1].t, y1 = pts[1].v;
+    const x2 = pts[2].t, y2 = pts[2].v;
+    const denom0 = (x0 - x1) * (x0 - x2) || 1;
+    const denom1 = (x1 - x0) * (x1 - x2) || 1;
+    const denom2 = (x2 - x0) * (x2 - x1) || 1;
+    const L0 = ((ts - x1) * (ts - x2)) / denom0;
+    const L1 = ((ts - x0) * (ts - x2)) / denom1;
+    const L2 = ((ts - x0) * (ts - x1)) / denom2;
+    const y = y0 * L0 + y1 * L1 + y2 * L2;
+    return Number.isFinite(y) ? y : null;
+  }
+
+  function interpolateAt(ts: number, mode?: 'lagrange3' | 'linear'): number | null {
+    if (mode === 'lagrange3') return interpolateLagrange3(ts);
+    return interpolateLinear(ts);
+  }
+
+  // Compute X domain, ticks count and label formatter based on time span or explicit rangeKey
   const xAxisConfig = useMemo(() => {
     if (!p.data.length) {
       return { domain: ['auto','auto'] as any, ticks: undefined as any, segments: 10, format: (ts: number) => '' };
@@ -42,61 +99,71 @@ export function MetricPanel(p: MetricPanelProps) {
     for (const d of p.data) { if (d.t < tMin) tMin = d.t; if (d.t > tMax) tMax = d.t; }
     if (!(tMax > tMin)) tMax = tMin + 1;
     const spanMs = tMax - tMin;
-    const hour = 3600_000; const day = 24*hour; const month30 = 30*day; const month90 = 90*day; const year365 = 365*day;
+
+    const hour = 3600_000; const day = 24*hour; const month30 = 30*day; const year365 = 365*day;
+
+    const decideBySpan = (ms: number) => {
+      // specific mode thresholds
+      if (ms < day) {
+        return { segments: 10, format: (ts:number) => {
+          const d = new Date(ts); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+        }};
+      } else if (ms < month30) {
+        return { segments: 10, format: (ts:number) => {
+          const d = new Date(ts);
+          const wd = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(d).replace('.', '').toLowerCase();
+          const dd = d.getDate().toString().padStart(2,'0');
+          return `${wd} ${dd}`;
+        }};
+      } else if (ms < 11*month30 + 5*day) { // ~11 months
+        return { segments: 10, format: (ts:number) => {
+          const d = new Date(ts);
+          const dd = d.getDate().toString().padStart(2,'0');
+          const mm = (d.getMonth()+1).toString().padStart(2,'0');
+          return `${dd}/${mm}`;
+        }};
+      } else {
+        return { segments: 12, format: (ts:number) => {
+          const d = new Date(ts);
+          const m = new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(d).replace('.', '');
+          return m.slice(0,3).toUpperCase();
+        }};
+      }
+    };
+
     let segments = 10;
     let formatter: (ts:number)=>string;
-    if (spanMs <= 48*hour) {
-      // 3H / 1D / <2D custom
-      segments = 10;
-      formatter = (ts:number) => {
-        const d = new Date(ts);
-        return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-      };
-    } else if (spanMs <= 8*day) {
-      // 7D
-      segments = 7;
-      formatter = (ts:number) => {
-        const d = new Date(ts);
-        const wd = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(d).replace('.', '').toLowerCase();
-        const dd = d.getDate().toString().padStart(2,'0');
-        return `${wd} ${dd}`;
-      };
-    } else if (spanMs <= 45*day) {
-      // 1M
-      segments = 10;
-      formatter = (ts:number) => {
-        const d = new Date(ts);
-        const wd = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(d).replace('.', '').toLowerCase();
-        const dd = d.getDate().toString().padStart(2,'0');
-        return `${wd} ${dd}`;
-      };
-    } else if (spanMs <= month90) {
-      // 3M
-      segments = 10;
-      formatter = (ts:number) => {
-        const d = new Date(ts);
-        const dd = d.getDate().toString().padStart(2,'0');
-        const mm = (d.getMonth()+1).toString().padStart(2,'0');
-        return `${dd}/${mm}`;
-      };
-    } else if (spanMs <= year365) {
-      // 1Y
-      segments = 12;
-      formatter = (ts:number) => {
-        const d = new Date(ts);
-        const m = new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(d).replace('.', '').toUpperCase();
-        return m;
-      };
+
+    // Prefer explicit rangeKey rules if provided and not 'specific'
+    if (p.rangeKey && p.rangeKey !== 'specific') {
+      const key = p.rangeKey;
+      if (key === '3h' || key === '1d') {
+        segments = 10;
+        formatter = (ts:number) => { const d = new Date(ts); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`; };
+      } else if (key === '7d' || key === '1m') {
+        segments = key === '7d' ? 7 : 10;
+        formatter = (ts:number) => {
+          const d = new Date(ts);
+          const wd = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(d).replace('.', '').toLowerCase();
+          const dd = d.getDate().toString().padStart(2,'0');
+          return `${wd} ${dd}`;
+        };
+      } else if (key === '3m') {
+        segments = 10;
+        formatter = (ts:number) => { const d = new Date(ts); const dd = d.getDate().toString().padStart(2,'0'); const mm = (d.getMonth()+1).toString().padStart(2,'0'); return `${dd}/${mm}`; };
+      } else if (key === 'all') {
+        segments = 12;
+        formatter = (ts:number) => { const d = new Date(ts); const m = new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(d).replace('.', ''); return m.slice(0,3).toUpperCase(); };
+      } else {
+        const decided = decideBySpan(spanMs);
+        segments = decided.segments; formatter = decided.format;
+      }
     } else {
-      // ALL or >1Y
-      segments = 10;
-      formatter = (ts:number) => {
-        const d = new Date(ts);
-        const m = new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(d).replace('.', '').toUpperCase();
-        const y = d.getFullYear();
-        return `${m} ${y}`;
-      };
+      // 'specific' or no hint -> decide by span
+      const decided = decideBySpan(spanMs);
+      segments = decided.segments; formatter = decided.format;
     }
+
     // Ticks: exactly `segments+1` equally spaced labels including start and end
     const ticksAll: number[] = [];
     const spacing = (tMax - tMin) / segments;
@@ -104,7 +171,7 @@ export function MetricPanel(p: MetricPanelProps) {
       ticksAll.push(Math.round(tMin + spacing * i));
     }
     return { domain: [tMin, tMax] as any, ticks: ticksAll, segments, format: formatter };
-  }, [p.data]);
+  }, [p.data, p.rangeKey]);
   // Tooltip: enforce order Date -> Moyenne -> Valeur by configuring names and relying on Recharts order
   // Order: Date -> Valeur -> Moyenne; ensure value series is rendered BEFORE avg series so tooltip lists value first
   const tooltipFormatter = useMemo(() => {
@@ -178,6 +245,12 @@ export function MetricPanel(p: MetricPanelProps) {
     return seg.y0 + (seg.y1 - seg.y0) * ratio;
   }, [p.trendOn, hoverTs, trendSegments]);
 
+  // Interpolated value at hover (conditional)
+  const valueHoverY = useMemo(() => {
+    if (!p.interpOn || hoverTs == null) return null as number | null;
+    return interpolateAt(hoverTs as number, p.interpMode || 'linear');
+  }, [hoverTs, p.data, p.interpOn, p.interpMode]);
+
   // Downsample indices for error bars: ticks + midpoints mapped to nearest data indices
   const errorBarIndexSet = useMemo(() => {
     if (!p.deltaY || !p.data.length) return new Set<number>();
@@ -229,23 +302,55 @@ export function MetricPanel(p: MetricPanelProps) {
 
   // Ensure the Y axis domain includes any user-provided bound(s)
   const computedYDomain = useMemo(() => {
-    const dataMin0 = p.data.length ? p.data.reduce((m, d) => (d.v < m ? d.v : m), p.data[0].v) : 0;
-    const dataMax = p.data.length ? p.data.reduce((m, d) => (d.v > m ? d.v : m), p.data[0].v) : 1;
-    const dataMin = Math.max(0, dataMin0); // clamp negatives to 0
-    const span = Math.max(1e-12, dataMax - dataMin);
+    const hasData = !!(p.data && p.data.length);
+    const rawMin = hasData ? p.data.reduce((m, d) => (d.v < m ? d.v : m), p.data[0].v) : (p.bounds?.low ?? 0);
+    const rawMax = hasData ? p.data.reduce((m, d) => (d.v > m ? d.v : m), p.data[0].v) : (p.bounds?.high ?? ((p.bounds?.low ?? 0) + 1));
+    let dataMin = rawMin;
+    let dataMax = rawMax;
+    if (!(dataMax > dataMin)) dataMax = dataMin + 1e-6;
+
+    // Start from data envelope
+    let loCandidate = dataMin;
+    let hiCandidate = dataMax;
+    const dataSpan = Math.max(1e-12, dataMax - dataMin);
+
+    // Include bounds if they are not excessively far from data envelope
+    if (p.bounds) {
+      const limitFactor = 4; // allow each side to expand up to 4x the data span
+      if (p.bounds.low != null) {
+        const dist = dataMin - (p.bounds.low as number);
+        if (!hasData || dist <= limitFactor * dataSpan) loCandidate = Math.min(loCandidate, p.bounds.low as number);
+      }
+      if (p.bounds.high != null) {
+        const dist = (p.bounds.high as number) - dataMax;
+        if (!hasData || dist <= limitFactor * dataSpan) hiCandidate = Math.max(hiCandidate, p.bounds.high as number);
+      }
+    }
+
+    const span = Math.max(1e-12, hiCandidate - loCandidate);
     const step = niceStep(span);
-    let lo = Math.max(0, Math.floor(dataMin / step) * step - step);
-    let hi = Math.ceil(dataMax / step) * step + step;
+    const margin = step * 0.5; // small margins around the visible range
+    let lo = Math.floor(loCandidate / step) * step - margin;
+    let hi = Math.ceil(hiCandidate / step) * step + margin;
     if (!(hi > lo)) { const eps = Math.max(1e-6, Math.abs(lo) * 1e-6 + 1e-6); hi = lo + eps; }
+
+    // Keep non-negative scale only when all values/bounds are non-negative
+    const allNonNegative = (
+      (hasData ? p.data.every(d => d.v >= 0) : true) &&
+      (p.bounds?.low == null || (p.bounds.low as number) >= 0) &&
+      (p.bounds?.high == null || (p.bounds.high as number) >= 0)
+    );
+    if (allNonNegative && lo < 0) lo = 0;
+
     return [lo, hi] as [number, number];
-  }, [p.data]);
+  }, [p.data, p.bounds]);
 
   // Custom tooltip: ensure we show the primary value point, not the trend point
   const customTooltip = useMemo(() => {
     return (info: any) => {
       const { active, payload, label } = info || {};
       if (!active || !payload || !payload.length) return null;
-      const ts = Number(label ?? payload[0]?.payload?.t ?? 0);
+      const ts = p.interpOn && hoverTs != null ? (hoverTs as number) : Number(label ?? payload[0]?.payload?.t ?? 0);
       let trendLabel = '';
       if (p.trendOn && trendMeta && trendMeta.length) {
         const seg = trendMeta.find(s => ts >= s.start && ts <= s.end) || trendMeta[trendMeta.length - 1];
@@ -256,34 +361,70 @@ export function MetricPanel(p: MetricPanelProps) {
         }
       }
       const dateStr = new Date(ts).toLocaleString();
-      const valueEntry = payload.find((e:any)=> e && e.dataKey === 'v');
-      const p0 = valueEntry?.payload || payload[0]?.payload;
-      const valueStr = p0 && typeof p0.v === 'number' ? `${p.title} : ${formatTick(p0.v)} ${p.unitLabel}`.trim() : '';
-      const avgStr = (p.avgOn && p0 && typeof p0.avg === 'number') ? `Moyenne : ${formatTick(p0.avg)} ${p.unitLabel}`.trim() : '';
-      return (
-        <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
-          <div>{dateStr}</div>
-          {valueStr && <div style={{ color: p.color || '#22c55e' }}>{valueStr}</div>}
-          {avgStr && <div style={{ color: '#ef4444' }}>{avgStr}</div>}
-          {trendLabel && <div style={{ color: '#111827' }}>{trendLabel}</div>}
-        </div>
-      );
+      if (p.interpOn) {
+        const vy = interpolateAt(ts, p.interpMode || 'linear');
+        const valueStr = vy != null ? `${p.title} : ${formatTick(vy)} ${p.unitLabel}`.trim() : '';
+        const avgStr = '';
+        return (
+          <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
+            <div>{dateStr}</div>
+            {valueStr && <div style={{ color: p.color || '#22c55e' }}>{valueStr}</div>}
+            {trendLabel && <div style={{ color: '#111827' }}>{trendLabel}</div>}
+          </div>
+        );
+      } else {
+        const valueEntry = payload.find((e:any)=> e && e.dataKey === 'v');
+        const p0 = valueEntry?.payload || payload[0]?.payload;
+        const valueStr = p0 && typeof p0.v === 'number' ? `${p.title} : ${formatTick(p0.v)} ${p.unitLabel}`.trim() : '';
+        const avgStr = (p.avgOn && p0 && typeof p0.avg === 'number') ? `Moyenne : ${formatTick(p0.avg)} ${p.unitLabel}`.trim() : '';
+        return (
+          <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
+            <div>{dateStr}</div>
+            {valueStr && <div style={{ color: p.color || '#22c55e' }}>{valueStr}</div>}
+            {avgStr && <div style={{ color: '#ef4444' }}>{avgStr}</div>}
+            {trendLabel && <div style={{ color: '#111827' }}>{trendLabel}</div>}
+          </div>
+        );
+      }
     };
-  }, [p.title, p.unitLabel, p.color, trendMeta, p.avgOn, p.trendOn]);
+  }, [p.title, p.unitLabel, p.color, trendMeta, p.avgOn, p.trendOn, p.interpOn, p.interpMode, hoverTs]);
 
   return (
     <div className="chart" style={{ height: 260 }}>
       <ResponsiveContainer>
-        <LineChart data={withErrors} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} onMouseMove={(e:any)=>{
-          try {
-            const ts = Number(e?.activeLabel ?? e?.label ?? e?.payload?.[0]?.payload?.t ?? null);
-            setHoverTs(Number.isFinite(ts) ? ts : null);
-          } catch { setHoverTs(null); }
-        }} onMouseLeave={()=> setHoverTs(null)}>
+        <LineChart data={withErrors} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+          onMouseMove={(e:any)=>{
+            try {
+              const chartX = Number(e?.chartX);
+              let ts: number | null = null;
+              if (Number.isFinite(chartX) && xRectRef.current && xDomainRef.current) {
+                const rect = xRectRef.current; const domain = xDomainRef.current; const scale = xScaleRef.current;
+                if (scale && typeof (scale as any).invert === 'function') {
+                  ts = Number((scale as any).invert(chartX));
+                } else {
+                  const ratio = Math.max(0, Math.min(1, (chartX - rect.x) / Math.max(1, rect.width)));
+                  ts = domain[0] + ratio * (domain[1] - domain[0]);
+                }
+              }
+              if (ts == null || !Number.isFinite(ts)) {
+                ts = Number(e?.activeLabel ?? e?.label ?? e?.payload?.[0]?.payload?.t ?? null);
+              }
+              const tsv = Number.isFinite(ts) ? (ts as number) : null;
+              if (tsv == null) { setHoverTs(null); return; }
+              requestAnimationFrame(() => setHoverTs(tsv));
+            } catch { setHoverTs(null); }
+          }}
+          onMouseLeave={()=> setHoverTs(null)}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" verticalCoordinatesGenerator={(gp:any)=>{
             try {
               if (!p.data.length) return [] as number[];
               const scale = gp?.xAxis?.scale;
+              // capture geometry & domain for continuous mapping
+              try {
+                xRectRef.current = { x: gp?.x ?? 0, width: gp?.width ?? 1 };
+                xDomainRef.current = xAxisConfig.domain as [number, number];
+                xScaleRef.current = scale || null;
+              } catch {}
               const xs: number[] = [];
               for (const ts of (xAxisConfig.ticks as number[])) {
                 const ratio = (ts - (xAxisConfig.domain as any)[0]) / Math.max(1, (xAxisConfig.domain as any)[1] - (xAxisConfig.domain as any)[0]);
@@ -332,6 +473,9 @@ export function MetricPanel(p: MetricPanelProps) {
           )}
           {(p.trendOn && hoverTs != null && trendHoverY != null) ? (
             <ReferenceDot x={hoverTs as any} y={trendHoverY as any} r={4} fill="#111827" stroke="#ffffff" strokeWidth={1} />
+          ) : null}
+          {(p.interpOn && hoverTs != null && valueHoverY != null) ? (
+            <ReferenceDot x={hoverTs as any} y={valueHoverY as any} r={4} fill={p.color || "#22c55e"} stroke="#ffffff" strokeWidth={1} />
           ) : null}
         </LineChart>
       </ResponsiveContainer>

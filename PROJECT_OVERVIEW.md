@@ -130,6 +130,17 @@ public/               // Static assets (SVG icons, images)
 - Offline behavior:
   - Les cartes hors ligne sur l’accueil sont cliquables; la page de détail s’ouvre en lecture seule avec graphiques vides et switch « Live » désactivé (étiquette « Hors ligne »).
 
+### Données (`src/pages/Donnees.tsx`)
+- Refonte visuelle-only (aucune action côté données pour l’instant):
+  - Panneau « Entrée manuelle »: sélection de barbotine existante, métrique, saisie date/heure au format `gg/mm/aaaa , HH:MM:SS`, valeur et unité dépendante de la métrique. Bouton désactivé.
+  - Panneau « Importer CSV » (tracé en pointillé): accept `.csv` format `timestamp,user_id,product,parameter,value,USL,LSL`. Entrées désactivées.
+  - Panneau « Télécharger des données (CSV) »: sélection multi-barbotines, multi-métriques, période (1h, 1j, 1 sem, dernier mois, dernière année, tout, personnalisé avec début/fin). Bouton désactivé.
+  - Panneau « Historique (tableaux) »: affichage en tableaux par date (ex: 21/10/2024, 22/10/2024). En-têtes: `Date | Pouvoir Couvrant | Viscosité | Densité | pH | H2O | Temperature | Silice | Grain`. Lignes = barbotines existantes. Valeurs simulées de manière déterministe à partir d’une seed stable.
+- Conformité UX:
+  - Ordre historique: plus anciens en haut.
+  - Unités par métrique alignées avec `store/chartParams.tsx` et `utils/units.ts`.
+  - Aucune persistance; champ et boutons annotés « Bientôt disponible ».
+
 ### Alerts (`src/pages/Alerts.tsx`)
 - Liste d’alertes déterminée par `bounds` (supporte bornes nulles, ≥/≤ si borne unique).
 - Import CSV (format `timestamp,value` ou `ISO,value`) → scatter.
