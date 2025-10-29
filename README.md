@@ -58,6 +58,7 @@ Modern evergreen browsers (Chromium, Firefox, Safari). Mobile not optimized. Tim
 ## Deeper Docs
 - Architecture, state, routing, chart conventions: see [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md#1-vision)
 - CSV import format and rules: see [docs/CSV.md](docs/CSV.md)
+- SQL schema (DDL, id encoding, timestamp policy): see [docs/SQL.md](docs/SQL.md)
 - Glossary and units: see [docs/Glossary.md](docs/Glossary.md)
 - Accessibility targets: see [docs/A11y.md](docs/A11y.md)
 - Performance guidance: see [docs/Performance.md](docs/Performance.md)

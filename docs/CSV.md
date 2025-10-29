@@ -38,6 +38,7 @@ Defines CSV formats and behavior used by the Alerts page scatter chart and the D
   - `id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl`
   - Timestamp should include timezone offset (e.g., `2024-08-14T13:00:00+02`).
 - Current behavior: no parsing or persistence; UI is read-only.
+ - Column semantics match the SQL schema; see [docs/SQL.md](SQL.md).
 
 ## Limitations
 - No server storage; data is lost on refresh.

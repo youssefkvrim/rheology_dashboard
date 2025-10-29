@@ -19,6 +19,7 @@ Authoritative technical documentation. Single source of truth for architecture, 
 - [11. Known Limitations](#11-known-limitations)
 - [12. Developer Notes](#12-developer-notes)
 - [Appendix: CSV Import](#appendix-csv-import)
+  - [SQL Schema](#sql-schema)
 
 ## 1. Vision
 Front-only dashboard to supervise barbotines. Focused on clarity, fast iteration, and consistent UX across charts. Data is simulated deterministically, enabling demos without backend.
@@ -196,4 +197,7 @@ public/               // Static assets (SVG icons, images)
 - For single-bound inputs, auto-complete missing bound (min→0, max→999) to keep zones meaningful.
 ## Appendix: CSV Import
 See [docs/CSV.md](docs/CSV.md) for the complete format and validation rules.
+
+## SQL Schema
+See [docs/SQL.md](docs/SQL.md) for the table definition, `id_rheology` encoding, and timestamp policy.
 
