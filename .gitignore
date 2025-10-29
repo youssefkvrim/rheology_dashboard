@@ -3,3 +3,9 @@ node_modules/
 .vite/
 dist/
 build/
+
+# Local env & IDE
+.env
+.env.*
+.idea/
+.vscode/

@@ -4,6 +4,7 @@ Domain terms and units used across the dashboard.
 
 ## Terms
 - Barbotine: Ceramic slurry used in manufacturing.
+- Compliance (Conformité): Min/Max limits per metric used to assess whether values are within acceptable thresholds.
 - Silica (Silice): Percentage of silica content in the slurry.
 - Covering Power (Pouvoir couvrant): Mass (g) vs time measurement from a plate dipping test.
 - Viscosity (Viscosité): Flow resistance, in mPa·s.

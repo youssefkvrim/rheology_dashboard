@@ -15,12 +15,13 @@ Lightweight, front-only dashboard (Vite + React + TypeScript) to visualize simul
 - [License & Contributing](#license--contributing)
 
 ## Overview
-Front-only demo with deterministic data generation. No backend, no server persistence. Suitable for demos and UI explorations.
+Front-only UI with optional SQL proxy (under `/api`) for real data when available; otherwise deterministic simulated data. No server writes from the UI.
 
 ## Features
 - Home: barbotine cards (online/offline), latest values, status badges; Ambient cards (Room Temperature, Room Humidity) with mini-charts.
-- Detail: real‑time charts (Density, Viscosity, Temperature, pH), Covering Power history, Mass test, H₂O Flow, plus Silica and Grains panels (axes only).
+- Detail: real‑time charts (Density, Viscosity, Temperature, pH), Covering Power history, Mass test, H₂O Flow, plus Silica and Grains panels (axes only if no data).
 - Unified chart parameters modal: Custom Period (Start/End), Compliance min/max, Unit, Average toggle, Critical zones (%).
+- Données: SQL-backed history table per day, CSV import UI (visual), CSV export controls; testing-only SQL generator panel (no DB writes).
 - Alerts: threshold breaches table + basic CSV import (temporary).
 
 ## Quick Start

@@ -131,15 +131,17 @@ public/               // Static assets (SVG icons, images)
   - Les cartes hors ligne sur l’accueil sont cliquables; la page de détail s’ouvre en lecture seule avec graphiques vides et switch « Live » désactivé (étiquette « Hors ligne »).
 
 ### Données (`src/pages/Donnees.tsx`)
-- Refonte visuelle-only (aucune action côté données pour l’instant):
-  - Panneau « Entrée manuelle »: sélection de barbotine existante, métrique, saisie date/heure au format `gg/mm/aaaa , HH:MM:SS`, valeur et unité dépendante de la métrique. Bouton désactivé.
-  - Panneau « Importer CSV » (tracé en pointillé): accept `.csv` format `timestamp,user_id,product,parameter,value,USL,LSL`. Entrées désactivées.
-  - Panneau « Télécharger des données (CSV) »: sélection multi-barbotines, multi-métriques, période (1h, 1j, 1 sem, dernier mois, dernière année, tout, personnalisé avec début/fin). Bouton désactivé.
-  - Panneau « Historique (tableaux) »: affichage en tableaux par date (ex: 21/10/2024, 22/10/2024). En-têtes: `Date | Pouvoir Couvrant | Viscosité | Densité | pH | H2O | Temperature | Silice | Grain`. Lignes = barbotines existantes. Valeurs simulées de manière déterministe à partir d’une seed stable.
-- Conformité UX:
-  - Ordre historique: plus anciens en haut.
-  - Unités par métrique alignées avec `store/chartParams.tsx` et `utils/units.ts`.
-  - Aucune persistance; champ et boutons annotés « Bientôt disponible ».
+- Lecture SQL côté client via endpoints `/api/rheology/*` (read-only) avec repli visuel si indisponible.
+- Panneaux:
+  - « Entrée manuelle »: sélecteurs (barbotine, métrique, date/heure, valeur, unité). Bouton inactif (pas d’écriture DB).
+  - « Importer CSV » (tracé en pointillé): pickers multi-fichiers `.csv` (≤ 2MB chacun). Alerte format: structure CSV attendue `id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl` (tooltips). Purement visuel pour l’instant.
+  - « Télécharger des données »: sélection d’une barbotine et période (Début/Fin). Bouton inactif (visual-only).
+  - « Historique (tableau) »: un seul tableau avec sections par date (ligne d’en-tête grisée) et tri interne par famille (M7‑3 → 2CN2 → R55 → autres). Chaque cellule affiche la dernière valeur du jour par métrique (pc,viscosity,density,pH,H2O,temperature,silice,grain) ou « — ».
+  - « SQL (Testing only) »: panneau de génération de requêtes sans écriture DB. Éditions de cellules: INSERT si création, UPDATE si modification, DELETE si suppression. Surlignage rouge des cellules modifiées.
+- Détails:
+  - Défaut Historique: si Début/Fin vides, auto‑remplissage min/max globales.
+  - Export: plus de sélecteur « Métriques » (compact). Bouton aligné à droite de la période.
+  - Import: cercle clicable (icône) et texte cliquable ouvrent le sélecteur de fichiers.
 
 ### Alerts (`src/pages/Alerts.tsx`)
 - Liste d’alertes déterminée par `bounds` (supporte bornes nulles, ≥/≤ si borne unique).

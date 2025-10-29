@@ -3,13 +3,14 @@
 This project renders simulated time‑series data with Recharts. Use the following guidance for responsive UX.
 
 ## Data Windows
-- Live charts retain ~48 points per metric (5s tick ≈ 4 min window in the base series; extended windows are simulated on demand).
+- Live charts retain ~48 points per metric (5s tick ≈ 4 min window in the base series; extended windows are simulated on demand or loaded read-only from SQL proxies when available).
 - Historical generators downsample by a computed step to cap points around a few hundred per chart.
 
 ## Limits
 - Target ≤ 2–3k points per chart for smooth pan/hover on typical laptops.
 - Avoid dot rendering for dense lines (`dot={false}`).
 - Average line is `isAnimationActive={false}` to save cycles.
+ - History tables aggregate to one value per metric per day (latest point) to limit DOM size.
 
 ## Animation & Rendering
 - Prefer dashed average (lightweight) over per‑point markers.

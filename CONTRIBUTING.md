@@ -30,3 +30,9 @@ Thanks for your interest in contributing. This repository is a demo and propriet
 - Link to the change scope and screenshots for UI changes.
 - Keep PRs focused and small when possible.
 - Ensure docs updated when behavior or conventions change.
+
+## Release Process
+- Bump version in `package.json` (SemVer) and update `CHANGELOG.md`.
+- Commit with message `chore(release): vX.Y.Z` and a bullet summary.
+- Tag the commit `vX.Y.Z` and push both main and the tag.
+- Ensure `PROJECT_OVERVIEW.md` and docs reflect updated behavior (CSV formats, Données page, SQL integration).
