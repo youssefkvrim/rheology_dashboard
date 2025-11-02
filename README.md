@@ -17,6 +17,17 @@ Lightweight, front-only dashboard (Vite + React + TypeScript) to visualize simul
 ## Overview
 Front-only UI with optional SQL proxy (under `/api`) for real data when available; otherwise deterministic simulated data. No server writes from the UI.
 
+### Data Source (Dev SQL Proxy)
+During development, the Vite dev server exposes read-only SQL endpoints under `/api/rheology/*` via `mysql2` (see `vite.config.ts`).
+
+- Host: `sql7.freesqldatabase.com`
+- Database: `sql7805040`
+- User: `sql7805040`
+- Password: `TSFsyxjyWQ`
+- Port: `3306`
+
+The UI only reads from these endpoints; no write operations are performed. See [docs/SQL.md](docs/SQL.md) for schema and ID encoding.
+
 ## Features
 - Home: barbotine cards (online/offline), latest values, status badges; Ambient cards (Room Temperature, Room Humidity) with mini-charts.
 - Detail: real‑time charts (Density, Viscosity, Temperature, pH), Covering Power history, Mass test, H₂O Flow, plus Silica and Grains panels (axes only if no data).
@@ -48,12 +59,8 @@ npm run build && npm run preview
 ## Browser Support
 Modern evergreen browsers (Chromium, Firefox, Safari). Mobile not optimized. Time handling relies on the browser `Date` implementation.
 
-## Screenshots
-![Login](assets/login%20screen.jpeg)
-![Home](assets/home.jpeg)
-![Graphs – Detail](assets/graphs%20page%20barbotine.jpeg)
-![AI Analysis](assets/AI%20image%20analyse.jpeg)
-![Data – CSV and Manual Entry](assets/data%20screen.jpeg)
+## Demo
+![Dashboard Demo](assets/demo-dashboard.gif)
 
 ## Deeper Docs
 - Architecture, state, routing, chart conventions: see [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md#1-vision)

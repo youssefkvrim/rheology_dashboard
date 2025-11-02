@@ -186,6 +186,21 @@ public/               // Static assets (SVG icons, images)
 - Default `SimMetricsRepository` wraps existing simulation selectors.
 - Future `ApiMetricsRepository` (via `services/api.ts`) will call SQL-backed endpoints.
 
+### Dev SQL Proxy (Vite)
+- The Vite dev server (`vite.config.ts`) registers a middleware under `/api/rheology/*` that queries MySQL using `mysql2/promise` (read-only).
+- Current configuration (development):
+  - Host: `sql7.freesqldatabase.com`
+  - Database: `sql7805040`
+  - User: `sql7805040`
+  - Password: `TSFsyxjyWQ`
+  - Port: `3306`
+- Endpoints:
+  - `/api/rheology/latest-all?slurries=ID1,ID2&params=density,viscosity,...`
+  - `/api/rheology/all?slurryId=ID&params=density,viscosity,...&includeBounds=1`
+  - `/api/rheology/bounds?slurryId=ID`
+  - `/api/rheology?slurryId=ID&parameter=density`
+- Timestamps are normalized to epoch on the client; raw SQL timestamps must be ISO with offset. See [docs/SQL.md](docs/SQL.md).
+
 ## 11. Known Limitations
 - Data is simulated (no backend). Auth is in-memory.
 - Import CSV is non-persistent.
