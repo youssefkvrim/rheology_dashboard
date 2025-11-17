@@ -43,10 +43,10 @@ export default function Detail() {
   const [overrideText, setOverrideText] = useState('');
   const [overrideJustif, setOverrideJustif] = useState('');
   const [manual, setManual] = useState<{ densite?: string; viscosite?: string; ph?: string; temperature?: string }>({});
-  const [densRange, setDensRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:densite`) as any) || '3m');
-  const [viscRange, setViscRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:viscosite`) as any) || '3m');
-  const [tempRange, setTempRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:temperature`) as any) || '3m');
-  const [phRange, setPhRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:ph`) as any) || '3m');
+  const [densRange, setDensRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:densite`) as any) || 'all');
+  const [viscRange, setViscRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:viscosite`) as any) || 'all');
+  const [tempRange, setTempRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:temperature`) as any) || 'all');
+  const [phRange, setPhRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:ph`) as any) || 'all');
   // anchors for horizontal pan per chart
   const [densAnchor, setDensAnchor] = useState<number | undefined>(undefined);
   const [viscAnchor, setViscAnchor] = useState<number | undefined>(undefined);
@@ -59,7 +59,7 @@ export default function Detail() {
   const [phY, setPhY] = useState<[number, number]>([6.5, 9.8]);
   // drag state
   const dragRef = useRef<{ startX: number; startY: number; startAnchor: number; startYMin: number; startYMax: number; mode: 'x' | 'y' | null } | null>(null);
-  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all' | 'specific'>(()=> (localStorage.getItem(`range:${id}:pc`) as any) || '3m');
+  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all' | 'specific'>(()=> (localStorage.getItem(`range:${id}:pc`) as any) || 'all');
   const [pcBounds, setPcBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.pc?.low ?? null, high: bounds.pc?.high ?? null }));
   const [imageModal, setImageModal] = useState<'photo' | 'ai' | null>(null);
   const [imgScale, setImgScale] = useState<number>(1);
@@ -76,7 +76,7 @@ export default function Detail() {
   const [h2oAvgOn, setH2oAvgOn] = useState<boolean>(true);
   const [h2oCritOn, setH2oCritOn] = useState<boolean>(true);
   const [h2oCritPct, setH2oCritPct] = useState<number>(30);
-  const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>(()=> (localStorage.getItem(`range:${id}:h2o`) as any) || '3m');
+  const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>(()=> (localStorage.getItem(`range:${id}:h2o`) as any) || 'all');
   const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.h2o.low, high: bounds.h2o.high }));
   // critical zones settings (pre-activated at 30%)
   const [densCritOn, setDensCritOn] = useState<boolean>(true);

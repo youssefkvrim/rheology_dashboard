@@ -7,6 +7,7 @@ import Params from '../pages/Params';
 import Login from '../pages/Login';
 import Reset from '../pages/Reset';
 import '../app.css';
+import { useAuth } from '../features/auth/AuthContext';
 
 export function App() {
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('theme') || 'light');
@@ -20,17 +21,25 @@ export function App() {
     return () => document.removeEventListener('click', close);
   }, [theme]);
 
-  const [authed, setAuthed] = useState<boolean>(() => sessionStorage.getItem('authed') === '1');
-  const onLogin = () => { setAuthed(true); sessionStorage.setItem('authed', '1'); };
-  const onLogout = () => { setAuthed(false); sessionStorage.removeItem('authed'); };
+  const { ready, isAuthenticated, user, login, logout } = useAuth();
 
-  if (!authed) {
+  if (!ready) {
+    return (
+      <div className="app">
+        <main className="content" style={{ maxWidth: 640, margin: '0 auto' }}>
+          <div className="panel" style={{ padding: 24, marginTop: 80, textAlign: 'center' }}>Chargement…</div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
     return (
       <div className="app">
         <main className="content" style={{ maxWidth: 640, margin: '0 auto' }}>
           <Routes>
             <Route path="/reset" element={<Reset />} />
-            <Route path="*" element={<Login onLogin={onLogin} />} />
+            <Route path="*" element={<Login onLogin={() => { void login(); }} />} />
           </Routes>
         </main>
       </div>
@@ -58,8 +67,8 @@ export function App() {
           <div style={{ position: 'relative' }}>
             <button className="user-btn" onClick={(e) => { e.stopPropagation(); setUserMenu(m => !m); }}>
               <div className="user-meta" style={{ textAlign: 'right' }}>
-                <span className="user-name">PFX - Safran Tech</span>
-                <span className="user-role">admin</span>
+                <span className="user-name">{user?.email || 'Utilisateur'}</span>
+                <span className="user-role">{user?.level === 3 ? 'write' : user?.level === 2 ? 'download' : 'read'}</span>
               </div>
               <img className="avatar" src="/assets/SAF.PA.svg" alt="user" />
             </button>
@@ -68,7 +77,7 @@ export function App() {
                 <a className="dropdown-item" href="#">Profil</a>
                 <NavLink className="dropdown-item" to="/params">Paramètres</NavLink>
                 <a className="dropdown-item" href="#">Support</a>
-                <button className="dropdown-item borderline" onClick={onLogout}>Se déconnecter</button>
+                <button className="dropdown-item borderline" onClick={() => { void logout(); }}>Se déconnecter</button>
               </div>
             )}
           </div>

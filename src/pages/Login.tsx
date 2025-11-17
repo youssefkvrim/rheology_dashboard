@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { authenticateUser, requestPasswordRecovery } from '../services/api';
+import { useAuth } from '../features/auth/AuthContext';
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [user, setUser] = useState('');
@@ -7,13 +8,19 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
   const [err, setErr] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { login: loginSSO } = useAuth();
   const inputBaseStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', height: 40 };
 
   return (
     <div style={{ display: 'grid', placeItems: 'center', height: '70vh' }}>
       <div className="panel" style={{ width: 360 }}>
         <h2>Connexion requise</h2>
-        <p className="muted">Veuillez saisir vos identifiants.</p>
+        <p className="muted">Connectez-vous avec SSO Safran ou utilisez l'auth locale (dev).</p>
+        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          <button onClick={() => { void loginSSO(); }} style={{ height: 40 }}>
+            Se connecter avec SSO Safran
+          </button>
+        </div>
         <div style={{ display: 'grid', gap: 8 }}>
           <input placeholder="Nom d'utilisateur ou email" value={user} onChange={e => setUser(e.target.value)} style={inputBaseStyle} />
           <div style={{ position: 'relative' }}>

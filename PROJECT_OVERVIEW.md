@@ -93,8 +93,22 @@ public/               // Static assets (SVG icons, images)
 ## 6. UI Shell (`src/App.tsx`)
 - Theme toggle (light/dark) persisted in `localStorage`.
 - Brand (Safran) navigates to `/` using router link.
-- Auth front-only: a simple `authed` gate toggled by `Login`.
+- Auth: SSO via Keycloak (`keycloak-js`). The app initializes on load and exposes auth state via `AuthProvider`.
 - Footer informative line (no top border).
+
+### 6.1 Auth & SSO
+- Frontend-only SSO using OIDC (Authorization Code + PKCE) against JetLab Keycloak:
+  - Config via Vite env: `VITE_SSO_URL`, `VITE_SSO_REALM`, `VITE_SSO_CLIENT_ID`, `VITE_SSO_REDIRECT_URI`, `VITE_SSO_LOGOUT_REDIRECT_URI`.
+  - Optional mapping to access levels (1=read, 2=download, 3=write):
+    - Groups: `VITE_SSO_GROUP_DOWNLOAD`, `VITE_SSO_GROUP_WRITE`
+    - Roles: `VITE_SSO_ROLE_DOWNLOAD`, `VITE_SSO_ROLE_WRITE`
+    - Email whitelists: `VITE_WHITELIST_DOWNLOAD`, `VITE_WHITELIST_WRITE`
+- Implementation files:
+  - `src/features/auth/keycloak.ts` → Keycloak instance (reads Vite env)
+  - `src/features/auth/AuthContext.tsx` → `AuthProvider` + `useAuth()` (exposes `ready`, `isAuthenticated`, `user`, `login`, `logout`)
+  - `src/pages/Login.tsx` → Adds “Se connecter avec SSO Safran” button. Local username/password remains a dev fallback.
+- Current backend endpoints are read-only; RBAC enforcement currently applies at UI level only. Backend token validation to be added when write/download endpoints are implemented.
+- Important: SPA must use a Public client in Keycloak (no client secret in browser). If a Confidential client is required, implement server-side OIDC (Node) to exchange code with `client_secret` and issue an app session. The current SPA path assumes Public client with PKCE.
 
 ## 7. Pages
 
@@ -186,23 +200,19 @@ public/               // Static assets (SVG icons, images)
 - Default `SimMetricsRepository` wraps existing simulation selectors.
 - Future `ApiMetricsRepository` (via `services/api.ts`) will call SQL-backed endpoints.
 
-### Dev SQL Proxy (Vite)
-- The Vite dev server (`vite.config.ts`) registers a middleware under `/api/rheology/*` that queries MySQL using `mysql2/promise` (read-only).
-- Current configuration (development):
-  - Host: `sql7.freesqldatabase.com`
-  - Database: `sql7805040`
-  - User: `sql7805040`
-  - Password: `TSFsyxjyWQ`
-  - Port: `3306`
-- Endpoints:
-  - `/api/rheology/latest-all?slurries=ID1,ID2&params=density,viscosity,...`
-  - `/api/rheology/all?slurryId=ID&params=density,viscosity,...&includeBounds=1`
-  - `/api/rheology/bounds?slurryId=ID`
-  - `/api/rheology?slurryId=ID&parameter=density`
+### Local Development Backend
+- The Node backend (`server/index.js`) connects to SQL Server via `mssql` and exposes `/api/rheology/*`.
+- Vite proxies `/api` to `http://localhost:3001` during development (see `vite.config.ts`).
 - Timestamps are normalized to epoch on the client; raw SQL timestamps must be ISO with offset. See [docs/SQL.md](docs/SQL.md).
 
+### Production SQL Backend (Node + SQL Server)
+- A small `express` server under `server/` connects to SQL Server (Azure/on‑prem) using `mssql` and exposes the same read-only endpoints as above.
+- Secrets live in `vault/secrets.env` (ignored by git). See `vault/secrets.example.env` for the variable list.
+- In development:
+  - Default: Vite proxies `/api` to `http://localhost:3001` (the Node backend).
+
 ## 11. Known Limitations
-- Data is simulated (no backend). Auth is in-memory.
+- Data is simulated (no backend). SSO is frontend-only; server-side token validation not yet wired.
 - Import CSV is non-persistent.
 - Silice/Grains panels show axes only until real data is wired.
 

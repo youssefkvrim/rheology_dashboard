@@ -17,16 +17,93 @@ Lightweight, front-only dashboard (Vite + React + TypeScript) to visualize simul
 ## Overview
 Front-only UI with optional SQL proxy (under `/api`) for real data when available; otherwise deterministic simulated data. No server writes from the UI.
 
-### Data Source (Dev SQL Proxy)
-During development, the Vite dev server exposes read-only SQL endpoints under `/api/rheology/*` via `mysql2` (see `vite.config.ts`).
+### Deployment (Safran Jetlab)
+- Host: `https://js-806cdd3e-6896-40f7-8d07-5d82cb2bafdd.apps.dev.dc1.cloud.safran/`
+- To allow the app to run behind the Jetlab reverse proxy, `vite.config.ts` includes `allowedHosts` entries for dev/preview:
 
-- Host: `sql7.freesqldatabase.com`
-- Database: `sql7805040`
-- User: `sql7805040`
-- Password: `TSFsyxjyWQ`
-- Port: `3306`
+```137:143:/Users/youssefkarim/Desktop/Dashboard Safran/vite.config.ts
+export default defineConfig({
+  plugins: [react(), sqlProxyPlugin()],
+  server: { port: 3000, host: true, allowedHosts:[
+    'js-806cdd3e-6896-40f7-8d07-5d82cb2bafdd.apps.dev.dc1.cloud.safran' ] },
+  preview: { port: 3000, host: true, allowedHosts:[
+    'js-806cdd3e-6896-40f7-8d07-5d82cb2bafdd.apps.dev.dc1.cloud.safran' ]  },
+});
+```
+
+If your deployment host changes, update those entries accordingly.
+
+#### Rebuild on each new Jetlab release
+After pushing a new version to Jetlab, rebuild the app in the Jetlab runtime:
+
+```bash
+# set project registry to npm-group
+cat > .npmrc <<'EOF'
+registry=https://artifacts.cloud.one.ad/repository/npm-group/
+@vite:registry=https://artifacts.cloud.one.ad/repository/npm-group/
+@types:registry=https://artifacts.cloud.one.ad/repository/npm-group/
+strict-ssl=false
+EOF
+
+# clean slate only if needed
+rm -rf node_modules package-lock.json
+
+# pin versions compatible with your Node v20.8
+npm pkg set devDependencies.vite="^6.0.11"
+npm pkg set devDependencies.@vitejs/plugin-react="^4.3.1"
+
+# OPTIONAL: if @types/* still 404, drop them (not needed to run/build)
+npm pkg delete devDependencies.@types/node devDependencies.@types/react devDependencies.@types/react-dom || true
+
+# install
+npm install
+
+# build
+npm run build
+
+# configure backend secrets (SQL Server) if not done yet
+mkdir -p vault
+cat > vault/secrets.env <<'EOF'
+# Backend port (serve both UI and API)
+BACKEND_PORT=3000
+# SQL Server connection
+MSSQL_SERVER=Y005N8C.rd1.rf1
+MSSQL_INSTANCE=DATATECH_PFX
+MSSQL_DATABASE=PFX_suivi_barbotine
+MSSQL_USER=admin_pfx
+MSSQL_PASSWORD=REPLACE_ME
+MSSQL_ENCRYPT=true
+MSSQL_TRUST_CERT=true
+EOF
+
+# start unified backend (serves dist/ + /api + SPA fallback)
+npm run server
+```
+
+- This unified server fixes both issues:
+  - `/api/*` requests are handled by the Node backend (no 404).
+  - Deep links (e.g., `/donnees`) fall back to `index.html` (no 404 on reload).
+- If you must keep a separate reverse proxy, route `/api/*` to this backend and serve `index.html` for any non‑file, non‑/api path.
+
+### Data Source (Dev backend)
+During development, the Node backend (server/index.js) exposes read-only SQL endpoints under `/api/rheology/*` and Vite proxies `/api` to `http://localhost:3001` (see `vite.config.ts`).
 
 The UI only reads from these endpoints; no write operations are performed. See [docs/SQL.md](docs/SQL.md) for schema and ID encoding.
+
+### Production Data (SQL Server backend)
+- A small Node.js backend under `server/` connects to the production SQL Server and exposes the same read-only endpoints under `/api/rheology/*`.
+- Secrets are stored in `vault/secrets.env` (ignored by git). Copy and edit:
+  1) `cp vault/secrets.example.env vault/secrets.env`
+  2) Fill `MSSQL_*` with your production values.
+- Run locally:
+  - `npm run server` (starts on `http://localhost:3001`)
+  - Vite will proxy `/api` to the backend by default (unless `VITE_SQL_PROXY=1` is set).
+- Environment variables:
+  - Client: `VITE_SQL_PROXY=1` to use the dev MySQL proxy; otherwise the backend is used via `/api`.
+  - Server: `BACKEND_PORT`, `MSSQL_SERVER`, `MSSQL_INSTANCE`, `MSSQL_DATABASE`, `MSSQL_USER`, `MSSQL_PASSWORD`, `MSSQL_PORT`, `MSSQL_ENCRYPT`, `MSSQL_TRUST_CERT`.
+  - Mapping from ODBC connection string:
+    - `DRIVER={ODBC Driver 18 for SQL Server};SERVER=tcp:Y005N8C.rd1.rf1\DATATECH_PFX;DATABASE=PFX_suivi_barbotine;ENCRYPT=yes;UID=admin_pfx;PWD=***;TrustServerCertificate=true`
+    - Set: `MSSQL_SERVER=Y005N8C.rd1.rf1`, `MSSQL_INSTANCE=DATATECH_PFX`, `MSSQL_DATABASE=PFX_suivi_barbotine`, `MSSQL_USER=admin_pfx`, `MSSQL_PASSWORD=***`, `MSSQL_ENCRYPT=true`, `MSSQL_TRUST_CERT=true`
 
 ## Features
 - Home: barbotine cards (online/offline), latest values, status badges; Ambient cards (Room Temperature, Room Humidity) with mini-charts.

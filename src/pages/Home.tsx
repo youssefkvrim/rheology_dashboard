@@ -3,7 +3,7 @@ import { useAppState } from '../store/appState';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { useEffect, useMemo, useState } from 'react';
 import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
-import { fetchRheologyLatestAll } from '../services/api';
+import { fetchRheologyLatestAll, fetchLatestBounds } from '../services/api';
 
 function badgeFromViscosity(v: number, low: number, high: number) {
   if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Warning' };
@@ -20,7 +20,7 @@ function mkTooltip(unit: string, metricLabel: string) {
 }
 
 export default function Home() {
-  const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph, doseRateHistory, getBoundsFor } = useAppState();
+  const { barbotines, bounds, ambient, ambientHistory, addBarbotine, doseRateLph, doseRateHistory, getBoundsFor, setBoundsFor } = useAppState();
   const navigate = useNavigate();
   const [ambientOpen, setAmbientOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -41,6 +41,34 @@ export default function Home() {
     })();
     return () => { cancelled = true; };
   }, [barbotines.length]);
+
+  // Proactively load latest bounds from DB for each slurry and store per-barbotine
+  useEffect(() => {
+    const sidToId = new Map<string, string>();
+    barbotines.forEach(b => {
+      const sid = (b as any).slurryId as string | undefined;
+      if (sid) sidToId.set(sid, b.id);
+    });
+    const slurries = Array.from(sidToId.keys());
+    if (!slurries.length) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await Promise.all(slurries.map(async (sid) => {
+          try {
+            const bArr = await fetchLatestBounds(sid);
+            if (cancelled || !Array.isArray(bArr)) return;
+            const bid = sidToId.get(sid) || '';
+            bArr.forEach((b:any) => {
+              const metric = b.key as 'densite'|'viscosite'|'pc'|'h2o'|'temperature'|'ph'|'silice'|'grains';
+              setBoundsFor(bid, metric, { low: (b.low ?? null), high: (b.high ?? null) });
+            });
+          } catch { /* ignore one slurry */ }
+        }));
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [barbotines, setBoundsFor]);
 
   // Memoized formatters and series for mini-charts
   const dayTickFormatter = useMemo(() => (ts: any) => new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), []);
@@ -121,9 +149,9 @@ export default function Home() {
           const rec = (sid && latest && latest[sid]) || {} as any;
           const now = Date.now();
           const within = (ms:number|undefined, windowMs:number) => (ms!=null && ms>0 && (now - ms) <= windowMs);
-          const threeMonths = 90*24*60*60*1000; const sevenMonths = 210*24*60*60*1000;
+          const threeMonths = 90*24*60*60*1000; const sevenMonths = 210*24*60*60*1000; const oneYear = 365*24*60*60*1000;
           const lastD = rec['density'] as any; const lastV = rec['viscosity'] as any; const lastPC = rec['pc'] as any; const lastH2O = rec['H2O'] as any;
-          const showD = lastD && within(lastD.t, threeMonths); const showV = lastV && within(lastV.t, threeMonths); const showPC = lastPC && within(lastPC.t, threeMonths); const showH2O = lastH2O && within(lastH2O.t, threeMonths);
+          const showD = lastD && within(lastD.t, oneYear); const showV = lastV && within(lastV.t, oneYear); const showPC = lastPC && within(lastPC.t, oneYear); const showH2O = lastH2O && within(lastH2O.t, oneYear);
           const onlineByData = (!!rec && Object.values(rec).some((r:any)=> within(r?.t, sevenMonths)));
           const isOnline = dbReachable && onlineByData;
           const bnds = getBoundsFor(b.id);
@@ -132,9 +160,9 @@ export default function Home() {
             const bb:any = (bnds as any)[key];
             if (!bb) return null;
             const hasLow = bb.low != null; const hasHigh = bb.high != null;
-            // Outside any defined bound -> Warning
-            if (hasLow && val < (bb.low as number)) return { cls: 'warn', label: 'Warning' };
-            if (hasHigh && val > (bb.high as number)) return { cls: 'warn', label: 'Warning' };
+            // Outside any defined bound -> Critical
+            if (hasLow && val < (bb.low as number)) return { cls: 'err', label: 'Critical' };
+            if (hasHigh && val > (bb.high as number)) return { cls: 'err', label: 'Critical' };
             // Single-side bound -> OK if inside
             if (hasLow && !hasHigh) return { cls: 'ok', label: 'OK' };
             if (!hasLow && hasHigh) return { cls: 'ok', label: 'OK' };
@@ -142,7 +170,7 @@ export default function Home() {
             if (hasLow && hasHigh) {
               const y1 = bb.low as number; const y2 = bb.high as number; if (!(y2>y1)) return { cls: 'ok', label: 'OK' };
               const span = y2 - y1; const crit = 0.30; const edge = span * (crit/2);
-              if (val <= y1 + edge || val >= y2 - edge) return { cls: 'err', label: 'Critical' };
+              if (val <= y1 + edge || val >= y2 - edge) return { cls: 'warn', label: 'Warning' };
               return { cls: 'ok', label: 'OK' };
             }
             return null;
