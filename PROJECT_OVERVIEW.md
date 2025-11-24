@@ -83,6 +83,7 @@ Defined in `app/App.tsx`:
 - Theme toggle; persisted to backend for authenticated users, fallback to local.
 - Auth via Keycloak; `AuthProvider` exposes `ready`, `isAuthenticated`, `user`, `login`, `logout`.
 - Footer with attribution.
+- Full-screen ASCII loader gates post-login navigation until SQL barbotine list loads (auto timeouts after 5s for resiliency).
 
 ## 7. Pages
 ### Home (`src/pages/Home.tsx`)

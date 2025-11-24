@@ -13,6 +13,7 @@ import '../app.css';
 import { useAuth } from '../features/auth/AuthContext';
 import { getUserPrefs, putUserPrefs } from '../services/api';
 import { apiHealth } from '../services/api';
+import { useAppState } from '../store/appState';
 
 export function App() {
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('theme') || 'light');
@@ -42,6 +43,16 @@ export function App() {
   }, []);
 
   const { ready, isAuthenticated, user, login, logout } = useAuth();
+  const { initialDataLoading } = useAppState();
+  const [dataGateTimedOut, setDataGateTimedOut] = useState(false);
+  useEffect(() => {
+    if (isAuthenticated && initialDataLoading) {
+      setDataGateTimedOut(false);
+      const id = window.setTimeout(() => setDataGateTimedOut(true), 5000);
+      return () => clearTimeout(id);
+    }
+    setDataGateTimedOut(false);
+  }, [isAuthenticated, initialDataLoading]);
   // Load theme from backend prefs when authenticated
   useEffect(() => {
     (async () => {
@@ -66,13 +77,11 @@ export function App() {
   }, [theme, isAuthenticated, user?.username]);
 
   if (!ready) {
-    return (
-      <div className="app">
-        <main className="content" style={{ maxWidth: 640, margin: '0 auto' }}>
-          <div className="panel" style={{ padding: 24, marginTop: 80, textAlign: 'center' }}>Chargement…</div>
-        </main>
-      </div>
-    );
+    return <Loading />;
+  }
+
+  if (isAuthenticated && initialDataLoading && !dataGateTimedOut) {
+    return <Loading />;
   }
 
   if (!isAuthenticated) {

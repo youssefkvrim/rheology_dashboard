@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Barbotine, Bounds, MetricSample, MetricsSeries, RangeKey, BarbotineConfig } from '../types/domain';
 import { MetricsRepository, SimMetricsRepository, ApiMetricsRepository } from '../repositories/metricsRepo';
 
@@ -28,6 +28,7 @@ type AppState = {
   setLastPlaqueSrc: (src: string | null) => void;
   addBarbotine: (label: string, online?: boolean, config?: BarbotineConfig) => void;
   applyMetricPoints: (key: 'densite'|'viscosite'|'ph'|'temperature', points: { t:number; v:number }[], mode: 'overwrite') => void;
+  initialDataLoading: boolean;
 };
 
 const AppStateContext = createContext<AppState | undefined>(undefined);
@@ -75,7 +76,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
     // Strip legacy hardcoded defaults if found in persisted storage
     const stripLegacy = (obj: any) => {
-      const copy = { ...obj };
+      const copy = { ...(obj || {}) };
       if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
       if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
       if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
@@ -98,7 +99,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const stripLegacy = (obj: any) => {
       const next: Record<string, AllBounds> = {};
       for (const [id, b] of Object.entries(obj || {})) {
-        const copy: any = { ...b };
+        const copy: any = { ...(b || {}) };
         if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
         if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
         if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
@@ -135,28 +136,35 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch { /* ignore */ }
     return [];
   });
+  const [initialDataLoading, setInitialDataLoading] = useState<boolean>(true);
+  const slurriesFetchCount = useRef(0);
+  const loadBarbotines = useCallback(async () => {
+    slurriesFetchCount.current += 1;
+    setInitialDataLoading(true);
+    try {
+      const list = await fetchSlurries();
+      const next: Barbotine[] = list.map(it => ({
+        id: it.id,
+        name: it.id.replace(/_/g, ' '),
+        slurryId: it.id,
+        online: true,
+        last: null,
+      }));
+      setBarbotines(next);
+    } catch {
+      // keep previous list; UI will show offline states
+    } finally {
+      slurriesFetchCount.current = Math.max(0, slurriesFetchCount.current - 1);
+      if (slurriesFetchCount.current === 0) {
+        setInitialDataLoading(false);
+      }
+    }
+  }, []);
 
   // Load barbotines from backend (distinct id_slurry)
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await fetchSlurries();
-        if (cancelled) return;
-        const next: Barbotine[] = list.map(it => ({
-          id: it.id,
-          name: it.id.replace(/_/g, ' '),
-          slurryId: it.id,
-          online: true,
-          last: null,
-        }));
-        setBarbotines(next);
-      } catch {
-        // keep current (possibly empty) list; UI will show offline states
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    void loadBarbotines();
+  }, [loadBarbotines]);
 
   // No ambient simulator; waiting for real data source
   // Persist barbotines list
@@ -197,13 +205,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     const onLogin = () => {
+      void loadBarbotines();
       try {
         const userId = sessionStorage.getItem('userId') || 'anonymous';
         const raw = localStorage.getItem(`bounds:${userId}`);
         if (raw) {
           const parsed = JSON.parse(raw) as typeof bounds;
           const strip = (obj: any) => {
-            const copy = { ...obj };
+          const copy = { ...(obj || {}) };
             if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
             if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
             if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
@@ -218,7 +227,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const stripAll = (o: Record<string, AllBounds>) => {
             const next: Record<string, AllBounds> = {};
             for (const [id, b] of Object.entries(o || {})) {
-              const copy: any = { ...b };
+          const copy: any = { ...(b || {}) };
               if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
               if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
               if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
@@ -250,7 +259,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const stripAll = (o: Record<string, AllBounds>) => {
               const next: Record<string, AllBounds> = {};
               for (const [id, b] of Object.entries(o || {})) {
-                const copy: any = { ...b };
+                const copy: any = { ...(b || {}) };
                 if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
                 if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
                 if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
@@ -266,7 +275,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
     window.addEventListener('user-login', onLogin);
     return () => window.removeEventListener('user-login', onLogin);
-  }, []);
+  }, [loadBarbotines]);
 
   const startMassTest = () => {
     const start = Date.now();
@@ -405,6 +414,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
     },
     repo,
+    initialDataLoading,
   };
 
   return (
