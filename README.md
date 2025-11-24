@@ -1,152 +1,114 @@
-# Safran Slurries Dashboard (Demo)
+# Safran Slurries Dashboard
 
-![status-badge](https://img.shields.io/badge/docs-unified-brightgreen)
+Vite + React + TypeScript dashboard for barbotine monitoring against a SQL Server backend exposed under `/api`. The app now targets real data only; simulated/demo data paths are removed.
 
-Lightweight, front-only dashboard (Vite + React + TypeScript) to visualize simulated slurries data with Recharts and React Router. English documentation; UI labels may appear in French.
+![Dashboard Demo](assets/demo-dashboard.gif)
 
-## Table of Contents
-- [Overview](#overview)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Scripts](#scripts)
-- [Browser Support](#browser-support)
-- [Screenshots](#screenshots)
-- [Deeper Docs](#deeper-docs)
-- [License & Contributing](#license--contributing)
+## Contents
+- Overview
+- Run locally (macOS, Windows)
+- Environment
+- Scripts
+- Features
+- CSV import/export
+- Deployment notes
+- License
 
 ## Overview
-Front-only UI with optional SQL proxy (under `/api`) for real data when available; otherwise deterministic simulated data. No server writes from the UI.
+- Frontend: React 18 + Vite 7, Recharts, React Router.
+- Backend: Node.js + Express + `mssql` (read/write). Serves:
+  - `/api/rheology/*` for time series, bounds, export/import.
+  - `/api/slurries` to list available barbotines (distinct `id_slurry`).
+  - `/api/user-prefs` to persist user preferences (bounds, theme).
+  - `/api/alerts/latest` for server-side alert evaluation.
+- Auth: Keycloak OIDC (frontend) for user identity; backend endpoints designed to accept a bearer token when server-side auth is enabled.
 
-### Deployment (Safran Jetlab)
-- Host: `https://js-806cdd3e-6896-40f7-8d07-5d82cb2bafdd.apps.dev.dc1.cloud.safran/`
-- To allow the app to run behind the Jetlab reverse proxy, `vite.config.ts` includes `allowedHosts` entries for dev/preview:
+## Run locally
+Prerequisites: Node.js ≥ 18, SQL Server (reachable) and valid credentials.
 
-```137:143:/Users/youssefkarim/Desktop/Dashboard Safran/vite.config.ts
-export default defineConfig({
-  plugins: [react(), sqlProxyPlugin()],
-  server: { port: 3000, host: true, allowedHosts:[
-    'js-806cdd3e-6896-40f7-8d07-5d82cb2bafdd.apps.dev.dc1.cloud.safran' ] },
-  preview: { port: 3000, host: true, allowedHosts:[
-    'js-806cdd3e-6896-40f7-8d07-5d82cb2bafdd.apps.dev.dc1.cloud.safran' ]  },
-});
+macOS:
+```bash
+cd "/Users/youssefkarim/Desktop/Dashboard Safran"
+cp vault/secrets.example.env vault/secrets.env
+# edit vault/secrets.env with MSSQL_* values
+npm install
+npm run server   # starts API on http://localhost:3001
+npm run dev      # starts frontend on http://localhost:5173
 ```
 
-If your deployment host changes, update those entries accordingly.
-
-#### Rebuild on each new Jetlab release
-After pushing a new version to Jetlab, rebuild the app in the Jetlab runtime:
-
-```bash
-# set project registry to npm-group
-cat > .npmrc <<'EOF'
-registry=https://artifacts.cloud.one.ad/repository/npm-group/
-@vite:registry=https://artifacts.cloud.one.ad/repository/npm-group/
-@types:registry=https://artifacts.cloud.one.ad/repository/npm-group/
-strict-ssl=false
-EOF
-
-# clean slate only if needed
-rm -rf node_modules package-lock.json
-
-# pin versions compatible with your Node v20.8
-npm pkg set devDependencies.vite="^6.0.11"
-npm pkg set devDependencies.@vitejs/plugin-react="^4.3.1"
-
-# OPTIONAL: if @types/* still 404, drop them (not needed to run/build)
-npm pkg delete devDependencies.@types/node devDependencies.@types/react devDependencies.@types/react-dom || true
-
-# install
+Windows (PowerShell):
+```powershell
+Set-Location "C:\Users\<you>\Desktop\Dashboard Safran"
+Copy-Item .\vault\secrets.example.env .\vault\secrets.env
+# edit .\vault\secrets.env with MSSQL_* values
 npm install
+npm run server   # http://localhost:3001
+npm run dev      # http://localhost:5173
+```
 
-# build
+Build and preview:
+```bash
 npm run build
+npm run preview  # http://localhost:4173
+```
 
-# configure backend secrets (SQL Server) if not done yet
-mkdir -p vault
-cat > vault/secrets.env <<'EOF'
-# Backend port (serve both UI and API)
-BACKEND_PORT=3000
-# SQL Server connection
-MSSQL_SERVER=Y005N8C.rd1.rf1
-MSSQL_INSTANCE=DATATECH_PFX
-MSSQL_DATABASE=PFX_suivi_barbotine
-MSSQL_USER=admin_pfx
-MSSQL_PASSWORD=REPLACE_ME
+## Environment
+Backend (`vault/secrets.env`):
+```
+BACKEND_PORT=3001
+MSSQL_SERVER=YOUR_SERVER
+MSSQL_INSTANCE=YOUR_INSTANCE
+MSSQL_DATABASE=YOUR_DATABASE
+MSSQL_USER=YOUR_USER
+MSSQL_PASSWORD=YOUR_PASS
+MSSQL_PORT=1433
 MSSQL_ENCRYPT=true
 MSSQL_TRUST_CERT=true
-EOF
-
-# start unified backend (serves dist/ + /api + SPA fallback)
-npm run server
 ```
 
-- This unified server fixes both issues:
-  - `/api/*` requests are handled by the Node backend (no 404).
-  - Deep links (e.g., `/donnees`) fall back to `index.html` (no 404 on reload).
-- If you must keep a separate reverse proxy, route `/api/*` to this backend and serve `index.html` for any non‑file, non‑/api path.
-
-### Data Source (Dev backend)
-During development, the Node backend (server/index.js) exposes read-only SQL endpoints under `/api/rheology/*` and Vite proxies `/api` to `http://localhost:3001` (see `vite.config.ts`).
-
-The UI only reads from these endpoints; no write operations are performed. See [docs/SQL.md](docs/SQL.md) for schema and ID encoding.
-
-### Production Data (SQL Server backend)
-- A small Node.js backend under `server/` connects to the production SQL Server and exposes the same read-only endpoints under `/api/rheology/*`.
-- Secrets are stored in `vault/secrets.env` (ignored by git). Copy and edit:
-  1) `cp vault/secrets.example.env vault/secrets.env`
-  2) Fill `MSSQL_*` with your production values.
-- Run locally:
-  - `npm run server` (starts on `http://localhost:3001`)
-  - Vite will proxy `/api` to the backend by default (unless `VITE_SQL_PROXY=1` is set).
-- Environment variables:
-  - Client: `VITE_SQL_PROXY=1` to use the dev MySQL proxy; otherwise the backend is used via `/api`.
-  - Server: `BACKEND_PORT`, `MSSQL_SERVER`, `MSSQL_INSTANCE`, `MSSQL_DATABASE`, `MSSQL_USER`, `MSSQL_PASSWORD`, `MSSQL_PORT`, `MSSQL_ENCRYPT`, `MSSQL_TRUST_CERT`.
-  - Mapping from ODBC connection string:
-    - `DRIVER={ODBC Driver 18 for SQL Server};SERVER=tcp:Y005N8C.rd1.rf1\DATATECH_PFX;DATABASE=PFX_suivi_barbotine;ENCRYPT=yes;UID=admin_pfx;PWD=***;TrustServerCertificate=true`
-    - Set: `MSSQL_SERVER=Y005N8C.rd1.rf1`, `MSSQL_INSTANCE=DATATECH_PFX`, `MSSQL_DATABASE=PFX_suivi_barbotine`, `MSSQL_USER=admin_pfx`, `MSSQL_PASSWORD=***`, `MSSQL_ENCRYPT=true`, `MSSQL_TRUST_CERT=true`
-
-## Features
-- Home: barbotine cards (online/offline), latest values, status badges; Ambient cards (Room Temperature, Room Humidity) with mini-charts.
-- Detail: real‑time charts (Density, Viscosity, Temperature, pH), Covering Power history, Mass test, H₂O Flow, plus Silica and Grains panels (axes only if no data).
-- Unified chart parameters modal: Custom Period (Start/End), Compliance min/max, Unit, Average toggle, Critical zones (%).
-- Données: SQL-backed history table per day, CSV import UI (visual), CSV export controls; testing-only SQL generator panel (no DB writes).
-- Alerts: threshold breaches table + basic CSV import (temporary).
-
-## Quick Start
-Prerequisites: Node.js ≥ 18
-
-```bash
-npm install
-npm run dev
+Frontend (`.env.local` optional):
 ```
-Open `http://localhost:5173`.
-
-Build and local preview:
-```bash
-npm run build && npm run preview
+VITE_API_BASE=/api
+VITE_SSO_URL=...
+VITE_SSO_REALM=...
+VITE_SSO_CLIENT_ID=...
+VITE_SSO_REDIRECT_URI=http://localhost:5173/
+VITE_SSO_LOGOUT_REDIRECT_URI=http://localhost:5173/
+VITE_WHITELIST_DOWNLOAD=alice@safrangroup.com,bob@safrangroup.com
+VITE_WHITELIST_WRITE=...
 ```
 
 ## Scripts
-| Script | Description |
-|-------:|-------------|
-| `dev` | Run Vite in development mode |
-| `build` | Production build |
-| `preview` | Serve the local production build |
+- `dev`: run Vite dev server
+- `build`: production build
+- `preview`: serve `dist/`
+- `server`: start Node API (`server/index.cjs`)
 
-## Browser Support
-Modern evergreen browsers (Chromium, Firefox, Safari). Mobile not optimized. Time handling relies on the browser `Date` implementation.
+## Features
+- Home: barbotine cards (online/offline), latest values and trend, bounds status.
+- Detail: density, viscosity, temperature, pH; covering power history; H₂O flow; silice/grains panels.
+- Données: history table per day; CSV import/export; SQL editor panel for testing (no direct DB writes from UI unless enabled).
+- Params: bounds and chart settings persisted to backend when authenticated; fallback to local.
 
-## Demo
-![Dashboard Demo](assets/demo-dashboard.gif)
+## CSV import/export
+- Export: GET `/api/rheology/export-csv?slurryId=...&start=...&end=...` returns:
+  `id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl`
+- Import: POST `/api/rheology/import-csv?override=0|1` with `text/csv` body in the same schema.
+  - If `override=0` and `id_rheology` exists, returns `409` with a conflict list.
+  - If `override=1`, updates existing rows; inserts new rows.
+  - Frontend upload is enabled only when DB is reachable.
 
-## Deeper Docs
-- Architecture, state, routing, chart conventions: see [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md#1-vision)
-- CSV import format and rules: see [docs/CSV.md](docs/CSV.md)
-- SQL schema (DDL, id encoding, timestamp policy): see [docs/SQL.md](docs/SQL.md)
-- Glossary and units: see [docs/Glossary.md](docs/Glossary.md)
-- Accessibility targets: see [docs/A11y.md](docs/A11y.md)
-- Performance guidance: see [docs/Performance.md](docs/Performance.md)
-- Contribution guidelines: see [CONTRIBUTING.md](CONTRIBUTING.md)
+## Deployment notes
+- Behind reverse proxies, ensure `/api/*` routes the Node backend; all other routes fall back to `index.html`.
+- Configure env as above. For Jetlab or other environments, expose 3001 internally and forward `/api` to it.
 
-## License & Contributing
-Proprietary. See [LICENSE](LICENSE). Contributions welcome via PRs; read [CONTRIBUTING.md](CONTRIBUTING.md).
+## License
+This project is proprietary.
+
+Snippet:
+```
+Copyright (c) Safran
+All rights reserved. Unauthorized copying of this file, via any medium is strictly prohibited.
+```
+
+See `LICENSE` for full terms.

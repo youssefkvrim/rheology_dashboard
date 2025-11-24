@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Barbotine, Bounds, MetricSample, MetricsSeries, RangeKey, BarbotineConfig } from '../types/domain';
-import { MetricsRepository, SimMetricsRepository } from '../repositories/metricsRepo';
+import { MetricsRepository, SimMetricsRepository, ApiMetricsRepository } from '../repositories/metricsRepo';
 
 type AppState = {
   seed: number;
@@ -16,8 +16,6 @@ type AppState = {
   ambient: { temperatureRoom: number; humidityRoom: number };
   ambientHistory: { t: number; temp: number; humid: number }[];
   addManualSample: (sample: Partial<{ densite: number; viscosite: number; ph: number; temperature: number }>) => void;
-  live: boolean;
-  setLive: (live: boolean) => void;
   getSeriesForRange: (range: RangeKey, anchorTs?: number) => MetricsSeries;
   getSeriesBetween: (startTs: number, endTs: number, stepMs?: number) => MetricsSeries;
   repo: MetricsRepository;
@@ -47,23 +45,7 @@ function createMulberry32(seed: number) {
 
 function clamp(value: number, min: number, max: number) { return Math.max(min, Math.min(max, value)); }
 
-function generateNames(): Array<{ name: string; slurryId: string }>{
-  return [
-    { name: 'M7-3 005', slurryId: 'M7-3_005' },
-    { name: 'M7-3 006', slurryId: 'M7-3_006' },
-    { name: 'M7-3 025ITK', slurryId: 'M7-3_025ITK' },
-    { name: 'M7-3 1/2ITG', slurryId: 'M7-3_1-2ITG' },
-    { name: 'M7-3 1-2PFX', slurryId: 'M7-3_1-2PFX' },
-    { name: '2CN2 005', slurryId: '2CN2_005' },
-    { name: '2CN2 007', slurryId: '2CN2_007' },
-    { name: '2CN2 008', slurryId: '2CN2_008' },
-    { name: '2CN2 ITK57U', slurryId: '2CN2_ITK57U' },
-    { name: 'R55 010', slurryId: 'R55_010' },
-    { name: 'R55 011', slurryId: 'R55_011' },
-    { name: 'R55 012ITG', slurryId: 'R55_012ITG' },
-    { name: 'R55 ITK57U', slurryId: 'R55_ITK57U' },
-  ];
-}
+import { fetchSlurries, getUserPrefs, putUserPrefs } from '../services/api';
 
 function initialSeries(now: number, base: { densite: number; viscosite: number; ph: number; temperature: number }, rng: () => number): MetricsSeries {
   const make = (baseValue: number, jitter: number) => Array.from({ length: 24 }, (_, i) => ({ t: now - (23 - i) * 5000, v: baseValue + (rng() * 2 - 1) * jitter }));
@@ -80,12 +62,31 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const rng = useMemo(() => createMulberry32(seedParam), [seedParam]);
 
   const [bounds, setBoundsState] = useState(() => {
-    const defaults = { densite: { low: 1.25 as number | null, high: 1.45 as number | null }, viscosite: { low: 350 as number | null, high: 550 as number | null }, ph: { low: 7.5 as number | null, high: 9.0 as number | null }, temperature: { low: 18 as number | null, high: 28 as number | null }, pc: { low: null as number | null, high: null as number | null }, h2o: { low: null as number | null, high: null as number | null }, silice: { low: null as number | null, high: null as number | null }, grains: { low: null as number | null, high: null as number | null } };
+    // Default: no prefilled bounds. Only DB-backed values should populate these.
+    const defaults = {
+      densite: { low: null as number | null, high: null as number | null },
+      viscosite: { low: null as number | null, high: null as number | null },
+      ph: { low: null as number | null, high: null as number | null },
+      temperature: { low: null as number | null, high: null as number | null },
+      pc: { low: null as number | null, high: null as number | null },
+      h2o: { low: null as number | null, high: null as number | null },
+      silice: { low: null as number | null, high: null as number | null },
+      grains: { low: null as number | null, high: null as number | null }
+    };
+    // Strip legacy hardcoded defaults if found in persisted storage
+    const stripLegacy = (obj: any) => {
+      const copy = { ...obj };
+      if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
+      if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
+      if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
+      if (copy?.temperature && copy.temperature.low === 18 && copy.temperature.high === 28) copy.temperature = { low: null, high: null };
+      return copy;
+    };
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
       const raw = localStorage.getItem(`bounds:${userId}`);
       if (raw) {
-        const parsed = JSON.parse(raw);
+        const parsed = stripLegacy(JSON.parse(raw));
         return { ...defaults, ...parsed };
       }
     } catch { /* ignore */ }
@@ -94,10 +95,22 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   type AllBounds = { densite: Bounds; viscosite: Bounds; ph: Bounds; temperature: Bounds; pc: Bounds; h2o: Bounds; silice: Bounds; grains: Bounds };
   const [boundsById, setBoundsById] = useState<Record<string, AllBounds>>(() => {
+    const stripLegacy = (obj: any) => {
+      const next: Record<string, AllBounds> = {};
+      for (const [id, b] of Object.entries(obj || {})) {
+        const copy: any = { ...b };
+        if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
+        if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
+        if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
+        if (copy?.temperature && copy.temperature.low === 18 && copy.temperature.high === 28) copy.temperature = { low: null, high: null };
+        next[id] = copy as AllBounds;
+      }
+      return next;
+    };
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
       const raw = localStorage.getItem(`boundsById:${userId}`);
-      if (raw) return JSON.parse(raw) as Record<string, AllBounds>;
+      if (raw) return stripLegacy(JSON.parse(raw)) as Record<string, AllBounds>;
     } catch { /* ignore */ }
     return {} as Record<string, AllBounds>;
   });
@@ -105,92 +118,47 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const now = Date.now();
   const [seriesM7, setSeriesM7] = useState<MetricsSeries>(() => ({ densite: [], viscosite: [], ph: [], temperature: [] }));
   const [overrideLog, setOverrideLog] = useState<{ ts: number; action: string; reason: string }[]>([]);
-  const [ambient, setAmbient] = useState<{ temperatureRoom: number; humidityRoom: number }>(() => ({ temperatureRoom: 22.0, humidityRoom: 60 }));
-  const [ambientHistory, setAmbientHistory] = useState<{ t: number; temp: number; humid: number }[]>(() => {
-    const now = Date.now();
-    const arr: { t: number; temp: number; humid: number }[] = [];
-    // seed last 3 days at 30 min step
-    for (let t = now - 3*24*60*60*1000; t <= now; t += 30*60*1000) {
-      const temp = 22 + (Math.sin(t/3.6e6) * 0.6) + (Math.random() * 0.2 - 0.1); // ~21.4..22.6
-      const humid = 61 + (Math.sin(t/7.2e6) * 3) + (Math.random()*2-1); // ~58..64
-      arr.push({ t, temp: Number(temp.toFixed(1)), humid: Math.round(humid) });
-    }
-    return arr;
-  });
-  const [live, setLive] = useState<boolean>(() => (localStorage.getItem('live') ?? '1') === '1');
+  const [ambient, setAmbient] = useState<{ temperatureRoom: number; humidityRoom: number }>(() => ({ temperatureRoom: 0, humidityRoom: 0 }));
+  const [ambientHistory, setAmbientHistory] = useState<{ t: number; temp: number; humid: number }[]>(() => []);
   const [doseRateLph, setDoseRateLph] = useState<number>(0.019);
-  const [doseRateHistory, setDoseRateHistory] = useState<MetricSample[]>(() => {
-    const now = Date.now();
-    const arr: MetricSample[] = [];
-    const sim = createMulberry32(seedParam + 555);
-    for (let t = now - 3*24*60*60*1000; t <= now; t += 10*60*1000) { // every 10 minutes across 3 days
-      const base = 0.025 + (sim() * 0.02 - 0.01); // 0.015..0.035
-      arr.push({ t, v: Number(base.toFixed(3)) });
-    }
-    return arr;
-  });
-  const [coverPowerHistory, setCoverPowerHistory] = useState<MetricSample[]>(() => {
-    const nowTs = Date.now();
-    // 20 points sur 10 jours
-    const simRng = createMulberry32(seedParam + 987);
-    const arr: MetricSample[] = [];
-    for (let i = 19; i >= 0; i--) {
-      const t = nowTs - i * (12 * 60 * 60 * 1000);
-      const base = 65 + (simRng() * 10 - 5);
-      arr.push({ t, v: Number(base.toFixed(2)) });
-    }
-    return arr;
-  });
+  const [doseRateHistory, setDoseRateHistory] = useState<MetricSample[]>(() => []);
+  const [coverPowerHistory, setCoverPowerHistory] = useState<MetricSample[]>(() => []);
   const [lastPlaqueSrc, setLastPlaqueSrc] = useState<string | null>(null);
 
   const [barbotines, setBarbotines] = useState<Barbotine[]>(() => {
-    const build = () => {
-      const items = generateNames();
-      return items.map((it) => ({
-        id: it.name,
-        name: it.name,
-        slurryId: it.slurryId,
-        online: true,
-        last: null
-      }));
-    };
     try {
       const raw = localStorage.getItem('barbotines');
       if (raw) {
         const parsed = JSON.parse(raw) as Barbotine[];
-        // migrate if old shape (missing slurryId or wrong order)
-        if (!Array.isArray(parsed) || !parsed.length || !('slurryId' in (parsed[0] as any))) {
-          const next = build();
-          localStorage.setItem('barbotines', JSON.stringify(next));
-          return next;
-        }
         return parsed;
       }
     } catch { /* ignore */ }
-    const next = build();
-    return next;
+    return [];
   });
 
-  // Tick toutes les 5s
+  // Load barbotines from backend (distinct id_slurry)
   useEffect(() => {
-    // disable simulator: ambient still updates, but series remain from DB only (empty otherwise)
-    const id = setInterval(() => {
-      if (!live) return;
-      setAmbient(prev => {
-        const t = clamp(prev.temperatureRoom + (Math.random() - 0.5) * 0.08, 21, 23);
-        const h = clamp(prev.humidityRoom + (Math.random() - 0.5) * 0.8, 55, 70);
-        const nextAmbient = { temperatureRoom: Number(t.toFixed(1)), humidityRoom: Math.round(h) };
-        const nowTs = Date.now();
-        setAmbientHistory(hist => {
-          const next = [...hist, { t: nowTs, temp: nextAmbient.temperatureRoom, humid: nextAmbient.humidityRoom }];
-          const windowStart = nowTs - 3*24*60*60*1000;
-          return next.filter(p => p.t >= windowStart);
-        });
-        return nextAmbient;
-      });
-    }, 5000);
-    return () => clearInterval(id);
-  }, [live]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchSlurries();
+        if (cancelled) return;
+        const next: Barbotine[] = list.map(it => ({
+          id: it.id,
+          name: it.id.replace(/_/g, ' '),
+          slurryId: it.id,
+          online: true,
+          last: null,
+        }));
+        setBarbotines(next);
+      } catch {
+        // keep current (possibly empty) list; UI will show offline states
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // No ambient simulator; waiting for real data source
   // Persist barbotines list
   useEffect(() => {
     try {
@@ -199,13 +167,18 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [barbotines]);
 
 
-  useEffect(() => { localStorage.setItem('live', live ? '1' : '0'); }, [live]);
-
   useEffect(() => {
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
       localStorage.setItem(`bounds:${userId}`, JSON.stringify(bounds));
     } catch { /* ignore */ }
+    (async () => {
+      try {
+        const userId = sessionStorage.getItem('userId') || '';
+        if (!userId) return;
+        await putUserPrefs(userId, { bounds });
+      } catch { /* ignore */ }
+    })();
   }, [bounds]);
 
   useEffect(() => {
@@ -213,6 +186,13 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const userId = sessionStorage.getItem('userId') || 'anonymous';
       localStorage.setItem(`boundsById:${userId}`, JSON.stringify(boundsById));
     } catch { /* ignore */ }
+    (async () => {
+      try {
+        const userId = sessionStorage.getItem('userId') || '';
+        if (!userId) return;
+        await putUserPrefs(userId, { boundsById });
+      } catch { /* ignore */ }
+    })();
   }, [boundsById]);
 
   useEffect(() => {
@@ -220,10 +200,69 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         const userId = sessionStorage.getItem('userId') || 'anonymous';
         const raw = localStorage.getItem(`bounds:${userId}`);
-        if (raw) setBoundsState((prev: typeof bounds) => ({ ...prev, ...(JSON.parse(raw) as typeof prev) }));
+        if (raw) {
+          const parsed = JSON.parse(raw) as typeof bounds;
+          const strip = (obj: any) => {
+            const copy = { ...obj };
+            if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
+            if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
+            if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
+            if (copy?.temperature && copy.temperature.low === 18 && copy.temperature.high === 28) copy.temperature = { low: null, high: null };
+            return copy;
+          };
+          setBoundsState((prev: typeof bounds) => ({ ...prev, ...(strip(parsed) as typeof prev) }));
+        }
         const rawMap = localStorage.getItem(`boundsById:${userId}`);
-        if (rawMap) setBoundsById(JSON.parse(rawMap) as Record<string, AllBounds>);
+        if (rawMap) {
+          const obj = JSON.parse(rawMap) as Record<string, AllBounds>;
+          const stripAll = (o: Record<string, AllBounds>) => {
+            const next: Record<string, AllBounds> = {};
+            for (const [id, b] of Object.entries(o || {})) {
+              const copy: any = { ...b };
+              if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
+              if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
+              if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
+              if (copy?.temperature && copy.temperature.low === 18 && copy.temperature.high === 28) copy.temperature = { low: null, high: null };
+              next[id] = copy as AllBounds;
+            }
+            return next;
+          };
+          setBoundsById(stripAll(obj));
+        }
       } catch { /* ignore */ }
+      (async () => {
+        try {
+          const userId = sessionStorage.getItem('userId') || '';
+          if (!userId) return;
+          const prefs = await getUserPrefs(userId);
+          if (prefs?.bounds) {
+            const strip = (obj: any) => {
+              const copy = { ...obj };
+              if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
+              if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
+              if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
+              if (copy?.temperature && copy.temperature.low === 18 && copy.temperature.high === 28) copy.temperature = { low: null, high: null };
+              return copy;
+            };
+            setBoundsState((prev: typeof bounds) => ({ ...prev, ...(strip(prefs.bounds) as typeof prev) }));
+          }
+          if (prefs?.boundsById) {
+            const stripAll = (o: Record<string, AllBounds>) => {
+              const next: Record<string, AllBounds> = {};
+              for (const [id, b] of Object.entries(o || {})) {
+                const copy: any = { ...b };
+                if (copy?.densite && copy.densite.low === 1.25 && copy.densite.high === 1.45) copy.densite = { low: null, high: null };
+                if (copy?.viscosite && copy.viscosite.low === 350 && copy.viscosite.high === 550) copy.viscosite = { low: null, high: null };
+                if (copy?.ph && copy.ph.low === 7.5 && copy.ph.high === 9.0) copy.ph = { low: null, high: null };
+                if (copy?.temperature && copy.temperature.low === 18 && copy.temperature.high === 28) copy.temperature = { low: null, high: null };
+                next[id] = copy as AllBounds;
+              }
+              return next;
+            };
+            setBoundsById(stripAll(prefs.boundsById as Record<string, AllBounds>));
+          }
+        } catch { /* ignore */ }
+      })();
     };
     window.addEventListener('user-login', onLogin);
     return () => window.removeEventListener('user-login', onLogin);
@@ -324,10 +363,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   };
 
-  const repo = useMemo(() => new SimMetricsRepository({
-    getSeriesForRange: selectSeriesForRange,
-    getSeriesBetween: selectSeriesBetween,
-  }), [seriesM7, seedParam]);
+  const repo = useMemo<MetricsRepository>(() => new ApiMetricsRepository(), []);
 
   const value: AppState = {
     seed: seedParam,
@@ -349,8 +385,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ambient,
     ambientHistory,
     addManualSample,
-    live,
-    setLive,
     doseRateHistory,
     getSeriesForRange: selectSeriesForRange,
     getSeriesBetween: selectSeriesBetween,

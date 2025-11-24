@@ -8,6 +8,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
   const [err, setErr] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [hoverForgot, setHoverForgot] = useState(false);
   const { login: loginSSO } = useAuth();
   const inputBaseStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', height: 40 };
 
@@ -15,12 +16,6 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
     <div style={{ display: 'grid', placeItems: 'center', height: '70vh' }}>
       <div className="panel" style={{ width: 360 }}>
         <h2>Connexion requise</h2>
-        <p className="muted">Connectez-vous avec SSO Safran ou utilisez l'auth locale (dev).</p>
-        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { void loginSSO(); }} style={{ height: 40 }}>
-            Se connecter avec SSO Safran
-          </button>
-        </div>
         <div style={{ display: 'grid', gap: 8 }}>
           <input placeholder="Nom d'utilisateur ou email" value={user} onChange={e => setUser(e.target.value)} style={inputBaseStyle} />
           <div style={{ position: 'relative' }}>
@@ -47,8 +42,16 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             } finally {
               setBusy(false);
             }
-          }}>Se connecter</button>
-          <button className="link" disabled={busy} onClick={async () => {
+          }} style={{ height: 40 }}>Se connecter</button>
+          <button onClick={() => { void loginSSO(); }} style={{ height: 40 }}>
+            Se connecter avec SSO Safran
+          </button>
+          <span
+            className="link"
+            aria-label="Mot de passe oublié"
+            onMouseEnter={()=>setHoverForgot(true)}
+            onMouseLeave={()=>setHoverForgot(false)}
+            onClick={async () => {
             setErr(''); setBusy(true);
             try {
               const r = await requestPasswordRecovery(user || 'youssef.karim@safrangroup.com');
@@ -58,7 +61,11 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             } finally {
               setBusy(false);
             }
-          }} style={{ textAlign: 'center' }}>J'ai perdu mon mot de passe</button>
+          }}
+            style={{ textAlign: 'center', cursor: 'pointer', fontSize: 13, lineHeight: '40px', opacity: hoverForgot ? 1 : 0.6 }}
+          >
+            mot de passe oublié
+          </span>
         </div>
       </div>
     </div>

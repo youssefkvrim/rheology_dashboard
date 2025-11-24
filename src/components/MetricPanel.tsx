@@ -435,7 +435,7 @@ export function MetricPanel(p: MetricPanelProps) {
             } catch { return [] as number[]; }
           }} />
           <XAxis dataKey="t" type="number" scale="time" domain={xAxisConfig.domain} allowDataOverflow={false} interval={0} ticks={xAxisConfig.ticks as any} stroke="#6b7280" tickFormatter={(ts:any)=> xAxisConfig.format(Number(ts))} />
-          <YAxis stroke="#6b7280" domain={computedYDomain as any} tickFormatter={(v:any)=>formatTick(Number(v))} />
+          <YAxis hide={!p.data.length} stroke="#6b7280" domain={computedYDomain as any} tickFormatter={(v:any)=>formatTick(Number(v))} />
           <Tooltip content={customTooltip as any} trigger="hover" shared={true} />
           {effectiveBounds && (
             (() => {

@@ -77,7 +77,7 @@ export function ParamsModal(p: ParamsModalProps) {
           </div>
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
             <label>Conformité min/max:</label>
-            <input type="text" inputMode="decimal" placeholder="min (ex: 1,2)" style={{ width: 110 }} value={draftLow}
+            <input type="text" inputMode="decimal" placeholder="min" style={{ width: 110 }} value={draftLow}
               onChange={e => {
                 const raw = e.target.value;
                 setDraftLow(raw);
@@ -85,7 +85,7 @@ export function ParamsModal(p: ParamsModalProps) {
                 if (n === null) { p.setLow && p.setLow(null); }
                 else if (!Number.isNaN(n)) { p.setLow && p.setLow(n as number); }
               }} />
-            <input type="text" inputMode="decimal" placeholder="max (ex: 1,2)" style={{ width: 110 }} value={draftHigh}
+            <input type="text" inputMode="decimal" placeholder="max" style={{ width: 110 }} value={draftHigh}
               onChange={e => {
                 const raw = e.target.value;
                 setDraftHigh(raw);

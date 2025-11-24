@@ -70,9 +70,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     (async () => {
       try {
         if (!keycloak) {
-          setReady(true);
+          // Dev fallback: restore session from sessionStorage if present
+          try {
+            const email = sessionStorage.getItem('email') || '';
+            const username = sessionStorage.getItem('userId') || '';
+            const role = (sessionStorage.getItem('role') || 'user').toLowerCase();
+            if (username || email) {
+              const level = inferLevel(email, [], []);
+              setIsAuthenticated(true);
+              setUser({ email, username, roles: [role], groups: [], level, token: null });
+            } else {
+              setIsAuthenticated(false);
+              setUser(null);
+            }
+          } catch {
           setIsAuthenticated(false);
           setUser(null);
+          } finally {
+            setReady(true);
+          }
           return;
         }
         const redirectUri =
@@ -120,7 +136,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isAuthenticated,
       user,
       login: async () => {
-        if (!keycloak) return;
+        if (!keycloak) {
+          // Dev fallback: treat existing sessionStorage as authenticated
+          const email = sessionStorage.getItem('email') || '';
+          const username = sessionStorage.getItem('userId') || '';
+          const role = (sessionStorage.getItem('role') || 'user').toLowerCase();
+          if (username || email) {
+            const level = inferLevel(email, [], []);
+            setIsAuthenticated(true);
+            setUser({ email, username, roles: [role], groups: [], level, token: null });
+          }
+          return;
+        }
         const redirectUri =
           (import.meta as any)?.env?.VITE_SSO_REDIRECT_URI || window.location.origin + '/';
         await keycloak.login({ redirectUri });
@@ -131,6 +158,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sessionStorage.removeItem('userId');
           sessionStorage.removeItem('email');
           sessionStorage.removeItem('role');
+          setIsAuthenticated(false);
+          setUser(null);
           window.location.href = '/';
           return;
         }

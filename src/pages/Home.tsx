@@ -3,7 +3,7 @@ import { useAppState } from '../store/appState';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { useEffect, useMemo, useState } from 'react';
 import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
-import { fetchRheologyLatestAll, fetchLatestBounds } from '../services/api';
+import { fetchRheologyLatestAll, fetchLatestBounds, apiHealth } from '../services/api';
 
 function badgeFromViscosity(v: number, low: number, high: number) {
   if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Warning' };
@@ -26,6 +26,10 @@ export default function Home() {
   const [createOpen, setCreateOpen] = useState(false);
   const [latest, setLatest] = useState<Record<string, Record<string, { t:number; v:number; unit?: string; prevV?: number; prevT?: number }>> | null>(null);
   const [dbReachable, setDbReachable] = useState<boolean>(true);
+  const [errors, setErrors] = useState<Array<{ ts:number; msg:string }>>([]);
+  const [fetchOk, setFetchOk] = useState<number>(0);
+  const [fetchErr, setFetchErr] = useState<number>(0);
+  const [dbgOpen, setDbgOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const slurries = barbotines.map(b => (b as any).slurryId).filter(Boolean) as string[];
@@ -34,9 +38,9 @@ export default function Home() {
     (async () => {
       try {
         const data = await fetchRheologyLatestAll(slurries);
-        if (!cancelled) { setLatest(data || {}); setDbReachable(true); }
+        if (!cancelled) { setLatest(data || {}); setDbReachable(true); setFetchOk(x => x+1); }
       } catch {
-        if (!cancelled) { setLatest({}); setDbReachable(false); }
+        if (!cancelled) { setLatest({}); setDbReachable(false); setFetchErr(x => x+1); }
       }
     })();
     return () => { cancelled = true; };
@@ -70,7 +74,7 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [barbotines, setBoundsFor]);
 
-  // Memoized formatters and series for mini-charts
+  // Memoized formatters and mini-charts
   const dayTickFormatter = useMemo(() => (ts: any) => new Date(Number(ts)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), []);
   const labelDateTime = useMemo(() => (v: any) => new Date(Number(v)).toLocaleString(), []);
   const tempChartData = useMemo(() => {
@@ -98,14 +102,33 @@ export default function Home() {
     return '/assets/constant.svg';
   }, [doseRateHistory]);
 
+  // Debugger: server status + website errors + fetch counters
+  useEffect(() => {
+    let cancelled = false;
+    const onError = (e: ErrorEvent) => setErrors(prev => [{ ts: Date.now(), msg: String(e?.message || 'Error') }, ...prev].slice(0,50));
+    const onRej = (e: PromiseRejectionEvent) => setErrors(prev => [{ ts: Date.now(), msg: String((e?.reason && e.reason.message) || 'Promise rejection') }, ...prev].slice(0,50));
+    const onAppErr = (e: any) => setErrors(prev => [{ ts: Date.now(), msg: String(e?.detail?.message || 'App error') }, ...prev].slice(0,50));
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRej);
+    window.addEventListener('app-error', onAppErr as any);
+    const id = setInterval(async () => {
+      try {
+        const ok = await apiHealth();
+        if (!cancelled) setDbReachable(ok);
+      } catch { if (!cancelled) setDbReachable(false); }
+    }, 10000);
+    return () => { cancelled = true; clearInterval(id); window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onRej); window.removeEventListener('app-error', onAppErr as any); };
+  }, []);
+
   return (
     <div>
       <h2>Accueil</h2>
+      {/* Ambient cards: show with placeholder values when no real source */}
       <div className="grid" style={{ marginTop: 8 }}>
         <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setAmbientOpen(v => !v)}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>Température salle</div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{ambient.temperatureRoom.toFixed(1)} °C</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--muted)' }}>—</div>
           </div>
           {ambientOpen && (
             <div style={{ height: 120, marginTop: 6 }}>
@@ -115,7 +138,6 @@ export default function Home() {
                   <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={dayTickFormatter} />
                   <YAxis stroke="#6b7280" domain={[15,30]} />
                   <Tooltip labelFormatter={labelDateTime} formatter={tooltipTempFormatter} />
-                  <ReferenceArea y1={21} y2={23} fill="#22c55e" fillOpacity={0.08} />
                   <Line type="monotone" dataKey="v" name="Température" stroke="#f59e0b" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
@@ -125,7 +147,7 @@ export default function Home() {
         <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setAmbientOpen(v => !v)}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>Humidité salle</div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{ambient.humidityRoom} %</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--muted)' }}>—</div>
           </div>
           {ambientOpen && (
             <div style={{ height: 120, marginTop: 6 }}>
@@ -135,7 +157,6 @@ export default function Home() {
                   <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={dayTickFormatter} />
                   <YAxis stroke="#6b7280" domain={[45,75]} />
                   <Tooltip labelFormatter={labelDateTime} formatter={tooltipHumidFormatter} />
-                  <ReferenceArea y1={58} y2={65} fill="#22c55e" fillOpacity={0.08} />
                   <Line type="monotone" dataKey="v" name="Humidité" stroke="#60a5fa" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
@@ -144,7 +165,26 @@ export default function Home() {
         </div>
       </div>
       <div className="grid" style={{ marginTop: 12 }}>
-        {[...barbotines, { id: '__new__', name: 'Ajouter une barbotine', online: false, last: null } as any].map(b => {
+        {(() => {
+          // Build a sorted list of only barbotines that have data in DB
+          const withData = barbotines.filter((b) => {
+            const sid = (b as any).slurryId as string | undefined;
+            const rec = (sid && latest && latest[sid]) || {} as any;
+            const now = Date.now();
+            const within = (ms:number|undefined, windowMs:number) => (ms!=null && ms>0 && (now - ms) <= windowMs);
+            const showAny = Object.values(rec).some((r:any)=> within((r as any)?.t, 210*24*60*60*1000));
+            return dbReachable && showAny;
+          });
+          const sorted = [...withData].sort((a,b) => {
+            const group = (name: string) => name.startsWith('M') ? 0 : name.startsWith('2') ? 1 : name.startsWith('R') ? 2 : 3;
+            const ga = group(a.name); const gb = group(b.name);
+            if (ga !== gb) return ga - gb;
+            return a.name.localeCompare(b.name);
+          });
+          // TEST ONLY: manual test card - remove in production
+          const testCard = { id: 'test', name: 'test', online: false, last: null } as any;
+          const finalList = [...sorted, testCard, { id: '__new__', name: 'Ajouter une barbotine', online: false, last: null } as any];
+          return finalList.map(b => {
           const sid = (b as any).slurryId as string | undefined;
           const rec = (sid && latest && latest[sid]) || {} as any;
           const now = Date.now();
@@ -152,7 +192,7 @@ export default function Home() {
           const threeMonths = 90*24*60*60*1000; const sevenMonths = 210*24*60*60*1000; const oneYear = 365*24*60*60*1000;
           const lastD = rec['density'] as any; const lastV = rec['viscosity'] as any; const lastPC = rec['pc'] as any; const lastH2O = rec['H2O'] as any;
           const showD = lastD && within(lastD.t, oneYear); const showV = lastV && within(lastV.t, oneYear); const showPC = lastPC && within(lastPC.t, oneYear); const showH2O = lastH2O && within(lastH2O.t, oneYear);
-          const onlineByData = (!!rec && Object.values(rec).some((r:any)=> within(r?.t, sevenMonths)));
+          const onlineByData = (!!rec && Object.values(rec).some((r:any)=> within((r as any)?.t, sevenMonths)));
           const isOnline = dbReachable && onlineByData;
           const bnds = getBoundsFor(b.id);
           function statusFromBounds(val:number|null|undefined, key:'densite'|'viscosite'|'pc'|'h2o'|'temperature'|'ph'){
@@ -251,12 +291,13 @@ export default function Home() {
                   </div>
                 </>
               ) : (
-                // Offline card: show placeholder summary; click navigates to empty detail page
+                // No data: hide card via filtering above; this branch only appears for the add-card
                 <div className="muted">—</div>
               )}
             </div>
           );
-        })}
+          });
+        })()}
       </div>
       {createOpen && (
         <BarbotineCreateDialog
@@ -267,6 +308,45 @@ export default function Home() {
           }}
         />
       )}
+      {/* Debugger widget */}
+      <div style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 60 }}>
+        {!dbgOpen ? (
+          <button
+            onClick={() => setDbgOpen(true)}
+            title="Debugger"
+            className="icon-btn"
+            style={{ width: 48, height: 48, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e5e7eb' }}
+          >
+            <img src="/assets/bug.svg" alt="bug" style={{ width: 22, height: 22 }} />
+          </button>
+        ) : (
+          <div className="panel" style={{ width: 280, padding: 10, maxHeight: '60vh', overflowY: 'auto' }}>
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <strong>Debugger</strong>
+              <button className="icon-btn" onClick={() => setDbgOpen(false)} aria-label="Toggle debugger">–</button>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12 }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span>Server</span>
+                <span className={`badge ${dbReachable ? 'ok' : 'err'}`}>{dbReachable ? 'OK' : 'DOWN'}</span>
+              </div>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span>Fetch</span>
+                <span>{fetchOk} ok / {fetchErr} err</span>
+              </div>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span>Errors</span>
+                <span>{errors.length}</span>
+              </div>
+              <div className="log" style={{ marginTop: 6 }}>
+                {errors.slice(0,5).map((e,i)=> (
+                  <div key={i} className="log-item">{new Date(e.ts).toLocaleTimeString()} — {e.msg}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

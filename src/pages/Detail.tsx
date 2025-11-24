@@ -8,6 +8,101 @@ import { MetricPanel } from '../components/MetricPanel';
 import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
 import { fetchRheologyAll } from '../services/api';
 
+// TEST ONLY: Hardcoded ML output path used across all barbotines for preview.
+// Replace with real data binding and remove hardcoding.
+const ML_BASE = '/assets/Plaque%20ML/output/2CN2_007_2_03-11-2025T100656+1';
+
+function AiAnalysis() {
+  const [summary, setSummary] = useState<Record<string, string> | null>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${ML_BASE}/summary.csv`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const text = await res.text();
+        const lines = text.trim().split(/\r?\n/);
+        if (!lines.length) return;
+        const headers = (lines[0] || '').split(',').map(s => s.trim());
+        const vals = (lines[1] || '').split(',').map(s => s.trim());
+        const obj: Record<string, string> = {};
+        headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+        if (!cancelled) setSummary(obj);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const items: Array<{ file: string; title: string; info: string }> = [
+    { file: 'plate.png', title: 'Plaque (crop)', info: 'Image recadrée de la plaque extraite du cliché' },
+    { file: 'histogram.png', title: 'Histogramme', info: 'Histogramme des intensités (niveaux de gris/luminosité)' },
+    { file: 'aggregates_overlay.png', title: 'Agrégats (overlay)', info: 'Superposition des zones agrégées sur l\'image' },
+    { file: 'aggregates_mask.png', title: 'Agrégats (mask)', info: 'Masque binaire des agrégats détectés' },
+    { file: 'tears_overlay.png', title: 'Larmes (overlay)', info: 'Superposition des zones de larmes sur l\'image' },
+    { file: 'tears_mask.png', title: 'Larmes (mask)', info: 'Masque binaire des larmes détectées' },
+    { file: 'tears_heatmap.png', title: 'Larmes (heatmap)', info: 'Carte de chaleur de l\'intensité des larmes' },
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+      <div className="row" style={{ gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <h4 style={{ margin: 0 }}>Détails IA</h4>
+        <span className="muted">Prévisualisation test — à remplacer par les sorties réelles</span>
+        <button className="seg-btn" onClick={() => {
+          const files = [...items.map(it => it.file), 'summary.csv'];
+          files.forEach((f) => {
+            const a = document.createElement('a');
+            a.href = `${ML_BASE}/${f}`;
+            a.download = f;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+        }}>Télécharger tout</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+        {items.map((it, idx) => (
+          <div key={it.file} className="panel" style={{ padding: 8, position: 'relative' }}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong>{it.title}</strong>
+              <span
+                onMouseEnter={() => setHoverIdx(idx)}
+                onMouseLeave={() => setHoverIdx(v => (v === idx ? null : v))}
+                style={{ position: 'relative', border: '1px solid var(--border)', borderRadius: 999, width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)', background: 'transparent', cursor: 'default' }}
+              >i
+                {hoverIdx === idx && (
+                  <div style={{ position: 'absolute', top: 22, right: 0, background: 'rgba(17,24,39,0.95)', color: '#f9fafb', padding: '6px 8px', fontSize: 12, borderRadius: 6, maxWidth: 260, zIndex: 30 }}>
+                    {it.info}
+                  </div>
+                )}
+              </span>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <img src={`${ML_BASE}/${it.file}`} alt={it.title} style={{ width: '100%', height: 'auto', borderRadius: 6, border: '1px solid var(--border)' }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="panel" style={{ padding: 8 }}>
+        <strong>Résumé</strong>
+        <div style={{ overflowX: 'auto', marginTop: 6 }}>
+          <table className="table" style={{ width: '100%', fontSize: 12 }}>
+            <tbody>
+              {summary ? Object.entries(summary).map(([k, v]) => (
+                <tr key={k}>
+                  <td style={{ width: 260, color: 'var(--muted)' }}>{k}</td>
+                  <td>{v}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={2} className="muted">Résumé indisponible</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function formatTime(ts: number) {
   const d = new Date(ts); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
 }
@@ -35,9 +130,10 @@ function niceCeilMax(maxVal: number, step: number): number {
 
 export default function Detail() {
   const { id } = useParams();
-  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, live, setLive, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory, barbotines, getBoundsFor, setBoundsFor } = useAppState();
+  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory, barbotines, getBoundsFor, setBoundsFor } = useAppState();
   const { params, setParams, getParamsFor, setParamsFor } = useChartParams();
   const [massSeries, setMassSeries] = useState<{ t: number; v: number }[] | null>(null);
+  const [checkingBalance, setCheckingBalance] = useState<boolean>(false);
   const [testState, setTestState] = useState<'idle' | 'calib' | 'trempe' | 'egouttage' | 'mesure' | 'termine'>('idle');
   const [remaining, setRemaining] = useState<number>(0);
   const [overrideText, setOverrideText] = useState('');
@@ -78,6 +174,10 @@ export default function Detail() {
   const [h2oCritPct, setH2oCritPct] = useState<number>(30);
   const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>(()=> (localStorage.getItem(`range:${id}:h2o`) as any) || 'all');
   const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.h2o.low, high: bounds.h2o.high }));
+  // Doseuse (visuel uniquement)
+  const [pumpConnected, setPumpConnected] = useState<boolean>(false);
+  const [pumpRunning, setPumpRunning] = useState<boolean>(false);
+  const [flowUnit, setFlowUnit] = useState<'L/h'|'L/day'>('L/h');
   // critical zones settings (pre-activated at 30%)
   const [densCritOn, setDensCritOn] = useState<boolean>(true);
   const [densCritPct, setDensCritPct] = useState<number>(30);
@@ -208,6 +308,15 @@ export default function Detail() {
   }, [h2oDb, h2oRange, h2oConv, specStart, specEnd, densRange, viscRange, tempRange, phRange]);
   const h2oYConv = useMemo(() => [h2oConv.to(0), h2oConv.to(0.05)] as [number, number], [h2oConv]);
   const h2oBoundsConv = useMemo(() => ({ low: scopedBounds.h2o.low==null?null:h2oConv.to(scopedBounds.h2o.low as number), high: scopedBounds.h2o.high==null?null:h2oConv.to(scopedBounds.h2o.high as number) }), [scopedBounds.h2o, h2oConv]);
+  const proposedFlowLph = useMemo(() => {
+    const lastV = viscositeData[viscositeData.length-1]?.value;
+    const b = scopedBounds.viscosite;
+    if (lastV == null || (b.low == null && b.high == null)) return doseRateLph;
+    if (b.high != null && lastV > (b.high as number)) return Number((doseRateLph + 0.005).toFixed(3));
+    if (b.low != null && lastV < (b.low as number)) return Number((Math.max(0, doseRateLph - 0.005)).toFixed(3));
+    return doseRateLph;
+  }, [viscositeData, scopedBounds.viscosite, doseRateLph]);
+  const toUnit = (lph: number, unit: 'L/h'|'L/day') => unit === 'L/h' ? lph : Number((lph * 24).toFixed(3));
 
   const pcConv = useMemo(() => pcConverters(scopedParams.pc.unit), [scopedParams.pc.unit]);
   const pcHistData = useMemo(() => {
@@ -323,12 +432,6 @@ export default function Detail() {
     <div>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>Barbotine {id}</h2>
-        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <span className="muted">{isOnline ? 'Mise à jour en direct' : 'Hors ligne (lecture seule)'}</span>
-          <button className="switch" data-on={isOnline && live} aria-label="Live" disabled={!isOnline} onClick={() => isOnline && setLive(!live)}>
-            <span className="knob" />
-          </button>
-        </div>
         {showMenu==='h2o' && (
           <ParamsModal
             title="Paramètres Débit H₂O"
@@ -467,7 +570,7 @@ export default function Detail() {
                 trendOn={scopedParams.densite.trendOn}
                 trendSegPct={scopedParams.densite.trendSegPct}
                 deltaY={scopedParams.densite.deltaY}
-                bounds={densBoundsConv as any}
+            bounds={densPanelData.length ? (densBoundsConv as any) : undefined}
                 critPct={densCritOn ? densCritPct : undefined}
                 color="#60a5fa"
                 trendWindowMs={scopedParams.densite.trendWindowMs}
@@ -577,7 +680,7 @@ export default function Detail() {
               trendOn={scopedParams.viscosite.trendOn}
               trendSegPct={scopedParams.viscosite.trendSegPct}
               deltaY={scopedParams.viscosite.deltaY}
-              bounds={viscBoundsConv as any}
+            bounds={viscPanelData.length ? (viscBoundsConv as any) : undefined}
               critPct={viscCritOn ? viscCritPct : undefined}
               color="#34d399"
               trendWindowMs={scopedParams.viscosite.trendWindowMs}
@@ -606,7 +709,7 @@ export default function Detail() {
                 trendOn={isOnline ? scopedParams.pc.trendOn : false}
               trendSegPct={scopedParams.pc.trendSegPct}
                 deltaY={scopedParams.pc.deltaY}
-                bounds={pcBoundsConv as any}
+                bounds={pcPanelData.length ? (pcBoundsConv as any) : undefined}
               critPct={pcCritOn ? pcCritPct : undefined}
                 color="#38bdf8"
                 trendWindowMs={scopedParams.pc.trendWindowMs}
@@ -651,7 +754,10 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Pouvoir couvrant - Essai (g)</h3>
             <div className="segmented">
               {(testState === 'idle' || testState === 'termine') ? (
-                <button className="seg-btn primary" onClick={() => {
+                <button className="seg-btn primary" style={{ height: 29 }} onClick={() => {
+                  setCheckingBalance(true);
+                  setTimeout(() => {
+                    setCheckingBalance(false);
               // Phases: calib 5s, trempe 10s, mesure 120s
               const tCalib = 5000; const tTrempe = 10000; const tMesure = 120000; const totalDurationMs = tCalib + tTrempe + tMesure;
               setTestState('calib');
@@ -687,9 +793,12 @@ export default function Detail() {
                   }
                 }
               }, 500);
-            }}>Lancer essai</button>
+                  }, 2000);
+                }}>
+                  {checkingBalance ? 'Vérification balance…' : 'Lancer essai'}
+                </button>
               ) : (
-                <span className="seg-btn" style={{ cursor: 'default' }}>
+                <span className="seg-btn" style={{ cursor: 'default', height: 29, display: 'inline-flex', alignItems: 'center' }}>
                   {testState === 'calib' ? `Calibration balance - ${remaining}s` : testState === 'trempe' ? `Trempé 10s - ${remaining}s` : testState === 'mesure' ? `Mesure en cours - ${remaining}s` : ''}
                 </span>
               )}
@@ -753,33 +862,26 @@ export default function Detail() {
       {/* Image overlay modal for quick view with click-outside to close */}
       {imageModal && (
         <div className="modal-backdrop" onClick={() => setImageModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ width: '70vw', height: '70vh', maxWidth: '1400px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <div className="modal-header">
               <h3 style={{ margin: 0 }}>{imageModal === 'photo' ? 'Photo de plaque' : 'Analyse IA'}</h3>
               <div className="row" style={{ gap: 8 }}>
                 <button onClick={() => setImageModal(null)}>Fermer</button>
               </div>
             </div>
-            <div className="modal-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ position: 'relative', overflow: 'hidden' }}>
+            {imageModal === 'photo' ? (
+              <div className="modal-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
                 <img
-                  src={imageModal === 'ai' ? '/assets/plaque-pickup_analysed.webp' : (lastPlaqueSrc || '/assets/plaque-pickup.jpg')}
-                  alt={imageModal === 'ai' ? 'Plaque analysée' : 'Plaque essai'}
-                  style={{ maxWidth: '95vw', maxHeight: '80vh', borderRadius: 8, border: '1px solid var(--border)', cursor: 'zoom-in' }}
-                  onClick={(e)=>{
-                    const el = e.currentTarget as HTMLImageElement;
-                    const isZoomed = el.style.transform && el.style.transform !== '';
-                    if (!isZoomed) {
-                      el.style.transformOrigin = `${e.nativeEvent.offsetX}px ${e.nativeEvent.offsetY}px`;
-                      el.style.transform = 'scale(1.8)';
-                    } else {
-                      el.style.transform = '';
-                    }
-                    el.style.transition = 'transform 180ms ease';
-                  }}
+                  src={lastPlaqueSrc || '/assets/plaque-pickup.jpg'}
+                  alt="Plaque essai"
+                  style={{ width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', borderRadius: 8, border: '1px solid var(--border)', display: 'block', objectFit: 'contain' }}
                 />
               </div>
+            ) : (
+              <div className="modal-body" style={{ flex: 1, overflow: 'auto' }}>
+                <AiAnalysis />
             </div>
+            )}
           </div>
         </div>
       )}
@@ -889,7 +991,7 @@ export default function Detail() {
               trendOn={scopedParams.temperature.trendOn}
               trendSegPct={scopedParams.temperature.trendSegPct}
               deltaY={scopedParams.temperature.deltaY}
-              bounds={tempBoundsConv as any}
+              bounds={tempPanelData.length ? (tempBoundsConv as any) : undefined}
               critPct={tempCritOn ? tempCritPct : undefined}
               color="#f59e0b"
               trendWindowMs={scopedParams.temperature.trendWindowMs}
@@ -999,7 +1101,7 @@ export default function Detail() {
               trendOn={scopedParams.ph.trendOn}
               trendSegPct={scopedParams.ph.trendSegPct}
               deltaY={scopedParams.ph.deltaY}
-              bounds={{ low: scopedBounds.ph.low, high: scopedBounds.ph.high } as any}
+              bounds={(phSeries.length ? { low: scopedBounds.ph.low, high: scopedBounds.ph.high } : undefined) as any}
               critPct={phCritOn ? phCritPct : undefined}
               color="#8b5cf6"
               trendWindowMs={scopedParams.ph.trendWindowMs}
@@ -1031,7 +1133,7 @@ export default function Detail() {
                 trendOn={isOnline ? scopedParams.h2o.trendOn : false}
                 trendSegPct={scopedParams.h2o.trendSegPct}
                 deltaY={scopedParams.h2o.deltaY}
-                bounds={isOnline ? (h2oBoundsConv as any) : undefined}
+                bounds={isOnline && h2oPanelData.length ? (h2oBoundsConv as any) : undefined}
                 critPct={isOnline && h2oCritOn ? h2oCritPct : undefined}
                 color="#3b82f6"
                 trendWindowMs={scopedParams.h2o.trendWindowMs}
@@ -1041,12 +1143,27 @@ export default function Detail() {
           </div>
         </div>
         <div className="panel">
-          <h3>Contrôle doseuse H₂O</h3>
-          <div className="chart" style={{ display: 'flex', alignItems: 'center' }}>
-            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-            <label>Débit (L/h)</label>
-              <input style={{ width: 120 }} type="number" step="0.001" value={doseRateLph} onChange={(e)=> setDoseRateLph(Number(e.target.value))} />
-            <span className="muted">Actuel: {doseRateLph.toFixed(3)} L/h</span>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Contrôle doseuse H₂O</h3>
+            <span className={`badge ${pumpConnected ? 'ok' : 'err'}`}>{pumpConnected ? 'Connectée' : 'Non connectée'}</span>
+            </div>
+          <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ display: 'grid', gap: 12, minWidth: 420, textAlign: 'center' }}>
+              <div className="row" style={{ justifyContent: 'space-around' }}>
+                <div>
+                  <div className="muted">Débit actuel</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{toUnit(doseRateLph, flowUnit).toFixed(3)} <span style={{ cursor: 'pointer' }} onClick={()=> setFlowUnit(u => u==='L/h'?'L/day':'L/h')}>{flowUnit}</span></div>
+                </div>
+                <div>
+                  <div className="muted">Débit proposé (calculé)</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{toUnit(proposedFlowLph, flowUnit).toFixed(3)} <span style={{ cursor: 'pointer' }} onClick={()=> setFlowUnit(u => u==='L/h'?'L/day':'L/h')}>{flowUnit}</span></div>
+                </div>
+              </div>
+              <div className="row" style={{ justifyContent: 'center', gap: 8, alignItems: 'center' }}>
+                <label>Commande manuelle</label>
+                <input style={{ width: 160 }} type="number" step="0.001" value={doseRateLph} onChange={(e)=> setDoseRateLph(Math.max(0, Number(e.target.value)))} />
+              </div>
+              {/* TODO: Remplacer par le statut et les commandes réels quand l'API de la doseuse sera disponible */}
             </div>
           </div>
         </div>

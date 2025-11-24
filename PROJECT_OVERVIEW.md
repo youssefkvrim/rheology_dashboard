@@ -1,228 +1,149 @@
 # PROJECT_OVERVIEW
 
-Authoritative technical documentation. Single source of truth for architecture, state, routing, and chart conventions.
+Authoritative technical documentation for architecture, state, routing, data flow, and chart conventions.
 
-## Mini Table of Contents
-- [1. Vision](#1-vision)
-- [2. Tech Stack](#2-tech-stack)
-- [3. High-Level Structure](#3-high-level-structure)
-- [4. Routing](#4-routing)
-- [5. State Management](#5-state-management-srcstoreappstatetsx)
-  - [Data Simulation](#data-simulation)
-  - [Bounds and Validation Policies](#bounds-and-validation-policies)
-  - [Locale & Time Policy](#locale--time-policy)
-- [6. UI Shell](#6-ui-shell-srcapptsx)
-- [7. Pages](#7-pages)
-- [8. Charts Conventions](#8-charts-conventions)
-- [9. Styling](#9-styling-srcappcss)
-- [10. Extensibility](#10-extensibility)
-- [11. Known Limitations](#11-known-limitations)
-- [12. Developer Notes](#12-developer-notes)
-- [Appendix: CSV Import](#appendix-csv-import)
-  - [SQL Schema](#sql-schema)
+## Contents
+- 1. Vision
+- 2. Tech Stack
+- 3. Structure
+- 4. Routing
+- 5. State Management
+- 6. UI Shell
+- 7. Pages
+- 8. Charts conventions
+- 9. Styling
+- 10. Data layer
+- 11. Backend API
+- 12. Known limitations
+- Appendix: CSV and SQL
 
 ## 1. Vision
-Front-only dashboard to supervise barbotines. Focused on clarity, fast iteration, and consistent UX across charts. Data is simulated deterministically, enabling demos without backend.
+Single-page dashboard to supervise barbotines using real SQL data only. If the database is unavailable, the UI shows empty states instead of simulated data. Focus on clarity, fast iteration, and consistent UX.
 
 ## 2. Tech Stack
 - Vite + React + TypeScript
-- React Router (navigation)
-- Recharts (charts)
-- CSS variables (themes), minimal custom CSS in `src/app.css`
+- React Router
+- Recharts
+- CSS variables (themes)
+- Node.js + Express + `mssql` (SQL Server)
+- Keycloak OIDC (frontend)
 
-## 3. High-Level Structure
+## 3. Structure
 ```
 src/
-  main.tsx            // App bootstrap: React.StrictMode, BrowserRouter, AppStateProvider
-  app/                // App shell and runtime flags
-    App.tsx           // nav, theme toggle, routing, footer
-    flags.ts          // feature flags for progressive rollout
-  components/         // Shared UI building blocks (ParamsModal, MetricPanel, ...)
-  features/           // Future feature modules (barbotine, ambient, auth)
-  repositories/       // Data access abstractions (MetricsRepository)
-    metricsRepo.ts    // interface + SimMetricsRepository wrapping simulation
-  services/           // External service clients (API/SQL placeholders)
-    api.ts            // placeholder HTTP client
+  main.tsx            # App bootstrap
+  app/
+    App.tsx           # shell, routing, theme
+    flags.ts          # legacy flags (to be removed if unused)
+  components/         # ParamsModal, MetricPanel, dialogs
+  features/
+    auth/             # Keycloak and auth context
+  repositories/
+    metricsRepo.ts    # MetricsRepository interface (+ API impl)
+  services/
+    api.ts            # HTTP client for /api endpoints
   store/
-    appState.tsx      // Global state, data simulation, selectors/utilities, repo context
+    appState.tsx      # Global state (bounds, ambient, UI), repository seam
+    chartParams.tsx   # Per-chart UI params
   types/
-    domain.ts         // Centralized domain models
-  app.css             // Global styles: layout, components, modal, charts, theme
-public/               // Static assets (SVG icons, images)
+    domain.ts         # Domain models and shared types
+  app.css             # Styles
+server/
+  index.cjs           # Express API for SQL Server (read/write)
 ```
 
 ## 4. Routing
-- Defined in `App.tsx`:
+Defined in `app/App.tsx`:
   - `/` → `Home`
   - `/barbotine/:id` → `Detail`
   - `/donnees` → `Donnees`
+- `/loading` → `Loading` (full-page ASCII loader test)
   - `/params` → `Params`
+- `/reset` → `Reset`
 
 ## 5. State Management (`src/store/appState.tsx`)
-- Context: `AppStateProvider`, accessed with `useAppState()`.
-- Types:
-  - Domain models centralized in `types/domain.ts`: `MetricSample`, `MetricsSeries`, `Barbotine`, `Bounds`, `MetricKey`, `RangeKey`.
-- AppState surface:
-  - `seriesM7`: metrics series (simulated), updated every 5s when `live` is true
-  - `bounds`: default min/max per metric; persisted in `localStorage`
-  - `ambient`, `ambientHistory`: room temperature (%) and humidity (%)
-  - `doseRateLph`, `doseRateHistory`: H₂O dosing rate (current + history)
-  - `coverPowerHistory`: historical covering power (g)
-  - `barbotines`: list of barbotines; one online (`M7-3 006`) as demo
-  - Actions: `setBounds`, `addManualSample`, `startMassTest`, `addOverride`, `applyMetricPoints`, etc.
-  - Selectors: `getSeriesForRange(range, anchor)`, `getSeriesBetween(start, end)`
-  - Repository seam: `repo` exposed on context implements `MetricsRepository` (simulated by default)
+- Context: `AppStateProvider` → `useAppState()`.
+- AppState surface (selected):
+  - `barbotines`: list loaded from backend (`/api/slurries`); persisted only for UX convenience.
+  - `bounds` and `boundsById`: defaults locally; persisted to backend for authenticated users.
+  - `ambient`, `ambientHistory`: room telemetry for mini-charts (local).
+  - `doseRateLph`, `doseRateHistory`, `coverPowerHistory`: local panels.
+  - Actions: `setBounds`, `setBoundsFor`, `addBarbotine`, `applyMetricPoints`, etc.
+  - Repository seam: `repo` implements `MetricsRepository` backed by API.
+- No simulated metric series remain. Charts render real data if available; otherwise, empty datasets.
+- Bounds and Validation:
+  - Nullable bounds (`low`/`high`); comparisons account for missing sides.
+  - Decimal inputs accept comma or dot.
+  - UI tolerates single-bound entry and visually completes the opposite bound for ranges only.
+- Time policy:
+  - Charts in browser local time.
+  - CSV accepts epoch or ISO with offset (server normalizes).
 
-### Data Simulation
-### Bounds and Validation Policies
-- Bounds (`low`/`high`) are nullable; comparisons handle missing sides.
-- Decimal inputs accept both comma and dot as separator in UI.
-- UI parameter modal allows entering only `min` or only `max`:
-  - Only `min` → `max` virtually defaults to `999.999` (not displayed)
-  - Only `max` → `min` virtually defaults to `0` (not displayed)
-- Charts shade ranges using virtual defaults; storage keeps only user-provided sides.
-- Alerts compute ≥/≤ checks accordingly; ranges are rendered as `≤X`, `≥Y`, or `Y–X`.
-
-### Locale & Time Policy
-- UI charts use browser local time; `Home` mini-charts format day/month as `DD/MM`.
-- 24‑hour time format for tooltips; timezone = client system timezone; DST behavior inherits browser `Date`.
-- CSV import accepts numeric epoch or ISO strings, parsed by `Date.parse`.
-- Mulberry32 seeded via `?seed=` for deterministic series.
-- Live tick (5s) updates series and ambient; H₂O history is extended and windowed.
-
-## 6. UI Shell (`src/App.tsx`)
-- Theme toggle (light/dark) persisted in `localStorage`.
-- Brand (Safran) navigates to `/` using router link.
-- Auth: SSO via Keycloak (`keycloak-js`). The app initializes on load and exposes auth state via `AuthProvider`.
-- Footer informative line (no top border).
-
-### 6.1 Auth & SSO
-- Frontend-only SSO using OIDC (Authorization Code + PKCE) against JetLab Keycloak:
-  - Config via Vite env: `VITE_SSO_URL`, `VITE_SSO_REALM`, `VITE_SSO_CLIENT_ID`, `VITE_SSO_REDIRECT_URI`, `VITE_SSO_LOGOUT_REDIRECT_URI`.
-  - Optional mapping to access levels (1=read, 2=download, 3=write):
-    - Groups: `VITE_SSO_GROUP_DOWNLOAD`, `VITE_SSO_GROUP_WRITE`
-    - Roles: `VITE_SSO_ROLE_DOWNLOAD`, `VITE_SSO_ROLE_WRITE`
-    - Email whitelists: `VITE_WHITELIST_DOWNLOAD`, `VITE_WHITELIST_WRITE`
-- Implementation files:
-  - `src/features/auth/keycloak.ts` → Keycloak instance (reads Vite env)
-  - `src/features/auth/AuthContext.tsx` → `AuthProvider` + `useAuth()` (exposes `ready`, `isAuthenticated`, `user`, `login`, `logout`)
-  - `src/pages/Login.tsx` → Adds “Se connecter avec SSO Safran” button. Local username/password remains a dev fallback.
-- Current backend endpoints are read-only; RBAC enforcement currently applies at UI level only. Backend token validation to be added when write/download endpoints are implemented.
-- Important: SPA must use a Public client in Keycloak (no client secret in browser). If a Confidential client is required, implement server-side OIDC (Node) to exchange code with `client_secret` and issue an app session. The current SPA path assumes Public client with PKCE.
+## 6. UI Shell (`src/app/App.tsx`)
+- Theme toggle; persisted to backend for authenticated users, fallback to local.
+- Auth via Keycloak; `AuthProvider` exposes `ready`, `isAuthenticated`, `user`, `login`, `logout`.
+- Footer with attribution.
 
 ## 7. Pages
-
 ### Home (`src/pages/Home.tsx`)
-- Grid of cards:
-  - Ambient: Température salle (Y [15,30]) et Humidité salle (Y [45,75]); X en `DD/MM`; pas de moyenne.
-  - Barbotines: pastille à gauche, libellés et badges à droite, flèche tendance H₂O à droite.
-- Navigation to detail when a barbotine is clickable.
-
-- Interactions (Phase 4):
-  - Ambient cards toggled en synchronisation: cliquer sur l’un ouvre/ferme les deux, charts toujours visibles quand ouvert.
-  - « Ajouter une barbotine » utilise un dialogue custom (voir `components/BarbotineCreateDialog.tsx`) avec un seul formulaire et un écran de confirmation.
-    - Champs: nom, type (M7-3 / 2CN2 / R55 / Custom), cases à cocher métriques (toutes cochées), choix de modes.
-    - Densité/Viscosité/Température: manuel ou Rheonics x276/x277/x278. Pouvoir couvrant: manuel ou BRET a6/a7/a8.
-    - Persistance: à la confirmation, la barbotine est ajoutée et sauvegardée dans `localStorage`.
+- Ambient mini-cards; barbotine cards with latest values and trend; online derived from recency and DB reachability.
+- Create barbotine dialog adds entries for client-side navigation; real-time data always comes from DB.
 
 ### Detail (`src/pages/Detail.tsx`)
-- Charts: Densité, Viscosité, Température, pH, Pouvoir couvrant (historique), Essai Masse, Débit H₂O, Silice (%), Grains (%).
-- Interactions:
-  - Pan horizontal par drag (layer transparent), ajustement vertical par drag.
-  - Tooltips unifiés: `date`, `Valeur`, `Average`.
-  - Moyenne: ligne pointillée rouge, activable.
-  - Zones critiques: plages colorées réglées par pourcentage (crit %) autour des bornes.
-  - Périodes: 3H/1D/7D/1M/3M/ALL + Période personnalisée (Début/Fin, validation Fin > Début).
-- Paramètres unifiés (fonction `renderParamsModal`):
-  - Période personnalisée (Début/Fin)
-  - Conformité min/max avec saisie unique possible (si min seul → max=999 ; si max seul → min=0)
-  - Unité (affichage tooltip)
-  - Moyenne (toggle)
-  - Zones critiques (%) (toggle + slider)
-- Images:
-  - Aperçu modal fermable par clic extérieur + lien « Ouvrir dans un nouvel onglet ».
-
-- Offline behavior:
-  - Les cartes hors ligne sur l’accueil sont cliquables; la page de détail s’ouvre en lecture seule avec graphiques vides et switch « Live » désactivé (étiquette « Hors ligne »).
+- Density, Viscosity, Temperature, pH; Covering Power history; H₂O flow; Silice/Grains panels.
+- Panning, adjustable Y ranges, unified Params modal, averages and critical zones.
+- Live toggle removed. Page reflects online/offline state; no simulation fallback.
 
 ### Données (`src/pages/Donnees.tsx`)
-- Lecture SQL côté client via endpoints `/api/rheology/*` (read-only) avec repli visuel si indisponible.
-- Panneaux:
-  - « Entrée manuelle »: sélecteurs (barbotine, métrique, date/heure, valeur, unité). Bouton inactif (pas d’écriture DB).
-  - « Importer CSV » (tracé en pointillé): pickers multi-fichiers `.csv` (≤ 2MB chacun). Alerte format: structure CSV attendue `id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl` (tooltips). Purement visuel pour l’instant.
-  - « Télécharger des données »: sélection d’une barbotine et période (Début/Fin). Bouton inactif (visual-only).
-  - « Historique (tableau) »: un seul tableau avec sections par date (ligne d’en-tête grisée) et tri interne par famille (M7‑3 → 2CN2 → R55 → autres). Chaque cellule affiche la dernière valeur du jour par métrique (pc,viscosity,density,pH,H2O,temperature,silice,grain) ou « — ».
-  - « SQL (Testing only) »: panneau de génération de requêtes sans écriture DB. Éditions de cellules: INSERT si création, UPDATE si modification, DELETE si suppression. Surlignage rouge des cellules modifiées.
-- Détails:
-  - Défaut Historique: si Début/Fin vides, auto‑remplissage min/max globales.
-  - Export: plus de sélecteur « Métriques » (compact). Bouton aligné à droite de la période.
-  - Import: cercle clicable (icône) et texte cliquable ouvrent le sélecteur de fichiers.
+- History table per day with per-family ordering; editable cells generate SQL templates (testing-only panel).
+- CSV Import/Export wired to backend. Import requires schema:
+  `id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl`.
+  Conflicts on existing `id_rheology` return 409 unless override is requested.
+- Testing-only loading overlay uses ASCII served from `public/loading_page/ascii.txt` (fetched first), with fallback to bundled `loading_page/ascii.txt?raw`.
 
-### Alerts (`src/pages/Alerts.tsx`)
-- Liste d’alertes déterminée par `bounds` (supporte bornes nulles, ≥/≤ si borne unique).
-- Import CSV (format `timestamp,value` ou `ISO,value`) → scatter.
-
-## 8. Charts Conventions
-- Libraries: Recharts (`LineChart`, `ScatterChart`).
-- Order: render primary value series before average; tooltips: (date, value, Average).
-- Average series: dashed red line, isAnimationActive=false.
-- Axis X: time scale; `Home` ambient mini-charts format `DD/MM`.
-
-- Tooltip behavior:
-  - Shared hover across the X-axis (`shared=true`) to ensure all primary data points are hoverable.
-  - Custom tooltip always reads the primary series (`dataKey="v"`) and appends a trend label derived from slope of the segment containing the hovered timestamp.
-  - Trend polyline does not dictate hover anchoring; primary series remains the interaction source.
-
-- ΔY (error bars):
-  - When `deltaY > 0`, error bars render only at X-axis tick positions and at midpoints between consecutive ticks.
-  - Implementation: `withErrors` marks selected indices with `errorY=[deltaY, deltaY]`; `<ErrorBar dataKey="errorY" />` renders only where present.
-  - Cartesian grid vertical coordinates are generated from X ticks for visual alignment.
-
-- Trend segmentation (`trendSegPct`):
-  - If 100%, compute a single regression over the window; otherwise, segment the X domain into equal parts and compute per-segment regressions.
-  - Trend is rendered as a dashed polyline, not used for tooltip anchoring.
+## 8. Charts conventions
+- Recharts; primary series first, average second; dashed red line for averages.
+- X axis is time; tooltips show local date/time; trend is visual only.
+- Critical zones (%) shade near bounds; single-bound cases supported.
 
 ## 9. Styling (`src/app.css`)
-- CSS vars for `--bg`, `--panel`, `--border`, `--muted`, `--text`, `--accent`, `--grid`.
-- Layout classes: `.grid`, `.row`, `.panel`, `.card`, `.badge`, `.chart`, `.segmented`.
+- CSS variables for theme palette.
+- Layout primitives: `.grid`, `.row`, `.panel`, `.card`, `.badge`, `.chart`, `.segmented`.
 - Modal: `.modal-backdrop`, `.modal`, `.modal-header`, `.modal-body`.
-- Switches: `.switch`, `.glass-switch` variants.
 
-## 10. Extensibility
-- New metric:
-  1) Add to `MetricsSeries`, default bounds in provider, and generators
-  2) In `Detail.tsx`, map source → series (`value` + computed `avg`)
-  3) Reuse `renderParamsModal` with unit/avg/crit/bounds configuration
-  4) Follow ordering and tooltip conventions
+## 10. Data layer
+- `MetricsRepository` abstracts read access.
+- API-backed implementation consumes `services/api.ts` to call:
+  - `/api/rheology` (single metric series),
+  - `/api/rheology/all` (multiple metrics + bounds option),
+  - `/api/rheology/latest-all` (latest snapshots),
+  - `/api/rheology/bounds` (latest bounds per metric).
+- All pages should prefer the repository seam for consistency.
 
-## 10.5 Data Layer (Repositories)
-- `repositories/metricsRepo.ts` defines `MetricsRepository` to abstract data sources.
-- Default `SimMetricsRepository` wraps existing simulation selectors.
-- Future `ApiMetricsRepository` (via `services/api.ts`) will call SQL-backed endpoints.
+## 11. Backend API (Node + SQL Server)
+- `server/index.cjs` exposes:
+  - `GET /api/health`
+  - `GET /api/slurries` — distinct `id_slurry`
+  - `GET /api/rheology` — single parameter series
+  - `GET /api/rheology/all` — multi-parameter series (+bounds)
+  - `GET /api/rheology/bounds` — latest bounds per metric
+  - `GET /api/rheology/latest-all` — latest snapshots across slurries/params
+  - `GET /api/rheology/export-csv` — CSV download within a time window
+  - `POST /api/rheology/import-csv?override=0|1` — CSV import with conflict handling
+  - `POST /api/rheology/point` — insert/update a single point
+  - `GET /api/alerts/latest` — evaluate alerts server-side
+  - `GET /api/user-prefs` / `PUT /api/user-prefs` — persist bounds/theme per user
+- Secrets in `vault/secrets.env`. Vite proxies `/api` to `http://localhost:3001` in dev.
 
-### Local Development Backend
-- The Node backend (`server/index.js`) connects to SQL Server via `mssql` and exposes `/api/rheology/*`.
-- Vite proxies `/api` to `http://localhost:3001` during development (see `vite.config.ts`).
-- Timestamps are normalized to epoch on the client; raw SQL timestamps must be ISO with offset. See [docs/SQL.md](docs/SQL.md).
+## 12. Known limitations
+- Server-side auth/authorization enforcement for write endpoints is not yet wired.
+- Silice/Grains panels display when data is present; empty otherwise.
+- Some legacy simulation scaffolding may remain; do not use for data.
 
-### Production SQL Backend (Node + SQL Server)
-- A small `express` server under `server/` connects to SQL Server (Azure/on‑prem) using `mssql` and exposes the same read-only endpoints as above.
-- Secrets live in `vault/secrets.env` (ignored by git). See `vault/secrets.example.env` for the variable list.
-- In development:
-  - Default: Vite proxies `/api` to `http://localhost:3001` (the Node backend).
+## Appendix
+### CSV Import
+See `docs/CSV.md` for format and validation rules.
 
-## 11. Known Limitations
-- Data is simulated (no backend). SSO is frontend-only; server-side token validation not yet wired.
-- Import CSV is non-persistent.
-- Silice/Grains panels show axes only until real data is wired.
-
-## 12. Developer Notes
-- Keep primary series first, average second to avoid tooltip duplication.
-- Always validate custom periods; guard against `Fin <= Début`.
-- For single-bound inputs, auto-complete missing bound (min→0, max→999) to keep zones meaningful.
-## Appendix: CSV Import
-See [docs/CSV.md](docs/CSV.md) for the complete format and validation rules.
-
-## SQL Schema
-See [docs/SQL.md](docs/SQL.md) for the table definition, `id_rheology` encoding, and timestamp policy.
+### SQL Schema
+See `docs/SQL.md` for table definition, `id_rheology` encoding, and timestamp policy.
 

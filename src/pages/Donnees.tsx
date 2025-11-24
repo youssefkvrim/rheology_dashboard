@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+// @ts-ignore - Vite raw import for testing-only ASCII art
+import asciiArt from '../../loading_page/ascii.txt?raw';
 import { useAppState } from '../store/appState';
 import type { ChartMetricKey } from '../store/chartParams';
-import { fetchRheologyAll } from '../services/api';
+import { fetchRheologyAll, apiHealth, exportCsv, importCsv, reportError } from '../services/api';
 
 type PeriodKey = '1h' | '1d' | '1w' | 'last_month' | 'last_year' | 'all' | 'custom';
 
@@ -71,6 +74,7 @@ function toLocalDateTimeInput(ts: number) {
 
 export default function Donnees() {
   const { barbotines } = useAppState();
+  const navigate = useNavigate();
 
   // Panel 1: Entrée manuelle (visuel uniquement)
   const [manualBb, setManualBb] = useState<string>(() => (barbotines[0]?.id ?? ''));
@@ -124,6 +128,39 @@ export default function Donnees() {
   // Track changed cells to highlight them in red
   const [changedCells, setChangedCells] = useState<Record<string, boolean>>({});
   const markCellChanged = (key: string) => setChangedCells(prev => ({ ...prev, [key]: true }));
+  // TESTING ONLY: loading overlay trigger and animation
+  const [showLoading, setShowLoading] = useState<boolean>(false);
+  const [dots, setDots] = useState<number>(0);
+  const [asciiText, setAsciiText] = useState<string>('');
+  useEffect(() => {
+    if (!showLoading) return;
+    const id = setInterval(() => setDots(d => (d + 1) % 4), 400);
+    return () => clearInterval(id);
+  }, [showLoading]);
+  useEffect(() => {
+    if (!showLoading) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Show immediately if bundled string is available
+        if (typeof asciiArt === 'string' && asciiArt.trim().length > 0) {
+          setAsciiText(asciiArt);
+        }
+        // Prefer public asset (served by Vite) to avoid bundling edge cases
+        let txt: string | null = null;
+        try {
+          const res = await fetch('/loading_page/ascii.txt', { cache: 'no-store' });
+          if (res.ok) txt = await res.text();
+        } catch {}
+        // Fallback to bundled raw import
+        if (!txt && typeof asciiArt === 'string' && asciiArt.trim().length > 0) txt = asciiArt;
+        if (!cancelled) setAsciiText(txt || '');
+      } catch {
+        if (!cancelled) setAsciiText('SAFRAN\nLoading…');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showLoading]);
   const sortBarbotines = (a: { name: string }, b: { name: string }) => {
     const group = (name: string) => name.startsWith('M') ? 0 : name.startsWith('2') ? 1 : 2;
     const ga = group(a.name); const gb = group(b.name);
@@ -137,15 +174,34 @@ export default function Donnees() {
   const [activeBrowse, setActiveBrowse] = useState(false);
   const [showFmtTip, setShowFmtTip] = useState(false);
   const [fmtTipPos, setFmtTipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dbReachable, setDbReachable] = useState<boolean>(true);
   const openPicker = () => fileInputRef.current?.click();
-  const onFiles = (files: FileList | null) => {
+  const onFiles = async (files: FileList | null) => {
     if (!files) return;
-    // Filter client-side: CSV and <= 2MB; visual only
-    const _accepted = Array.from(files).filter(f => /\.csv$/i.test(f.name) && f.size <= 2 * 1024 * 1024);
-    void _accepted;
+    if (!dbReachable) { alert('Base de données indisponible'); return; }
+    const accepted = Array.from(files).filter(f => /\.csv$/i.test(f.name) && f.size <= 2 * 1024 * 1024);
+    if (!accepted.length) return;
+    const file = accepted[0];
+    const text = await file.text();
+    // First attempt without override
+    const res = await importCsv(text, false);
+    if (!res.ok && res.conflicts && res.conflicts.length) {
+      const ask = window.confirm(`Conflits sur ${res.conflicts.length} enregistrements. Écraser les existants ?`);
+      if (ask) {
+        const res2 = await importCsv(text, true);
+        if (res2.ok) alert(`Import OK. Nouveaux: ${(res2.inserted||[]).length}, Modifiés: ${(res2.updated||[]).length}`);
+        else alert('Import échoué.');
+      }
+    } else if (res.ok) {
+      alert(`Import OK. Nouveaux: ${(res.inserted||[]).length}, Modifiés: ${(res.updated||[]).length}`);
+    } else {
+      alert('Import échoué.');
+    }
   };
 
   useEffect(() => {
+    // Check backend reachability at entry
+    apiHealth().then(setDbReachable).catch(()=>setDbReachable(false));
     let cancelled = false;
     async function load() {
       const s = Date.parse(histStart);
@@ -371,7 +427,33 @@ export default function Donnees() {
               <input type="datetime-local" value={expStart} onChange={e => setExpStart(e.target.value)} />
               <label>Fin</label>
               <input type="datetime-local" value={expEnd} onChange={e => setExpEnd(e.target.value)} />
-              <button disabled title="Bientôt disponible" style={{ marginLeft: 'auto' }}>Télécharger CSV</button>
+              <button
+                disabled={!dbReachable}
+                onClick={async ()=> {
+                  if (!dbReachable) { alert('Base de données indisponible'); return; }
+                  const b = barbotines.find(bb => bb.id === expBbSingle);
+                  const sid = (b as any)?.slurryId || b?.id;
+                  if (!sid) return;
+                  const s = Date.parse(expStart); const e = Date.parse(expEnd);
+                  const startTs = Number.isFinite(s) ? s : undefined as any;
+                  const endTs = Number.isFinite(e) ? e : undefined as any;
+                  try {
+                    const blob = await exportCsv(String(sid), startTs, endTs);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${String(sid)}_${Date.now()}.csv`;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    URL.revokeObjectURL(url);
+                  } catch (e:any) {
+                    reportError(`Export CSV failed: ${e?.message || 'error'}`);
+                    alert('Export échoué.');
+                  }
+                }}
+                style={{ marginLeft: 'auto' }}
+              >
+                Télécharger CSV
+              </button>
             </div>
           </div>
         </div>
@@ -492,6 +574,116 @@ export default function Donnees() {
           <button onClick={()=> setSqlEdits([])}>Clear</button>
         </div>
       </div>
+
+      {/* TESTING ONLY: trigger ASCII loading overlay (remove before production) */}
+      <div className="panel" style={{ marginTop: 16 }}>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button title="TEST ONLY — remove before production" onClick={()=> navigate('/loading')}>
+            Afficher loading (test)
+          </button>
+        </div>
+      </div>
+
+      {showLoading && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={()=> setShowLoading(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <div
+            onClick={(e)=> e.stopPropagation()}
+            style={{
+              width: '70vw',
+              height: '70vh',
+              maxWidth: 1200,
+              maxHeight: '80vh',
+              background: 'var(--panel)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              position: 'relative'
+            }}
+          >
+            <style>
+              {`
+              @keyframes scan {
+                0% { transform: translateY(-100%); opacity: 0.0; }
+                10% { opacity: 0.18; }
+                50% { opacity: 0.14; }
+                100% { transform: translateY(100%); opacity: 0.0; }
+              }
+              @keyframes gentlePulse {
+                0% { opacity: 1.0; }
+                50% { opacity: 0.78; }
+                100% { opacity: 1.0; }
+              }
+              @keyframes shimmerX {
+                0% { transform: translateX(-120%); opacity: 0.0; }
+                10% { opacity: 0.22; }
+                50% { opacity: 0.18; }
+                100% { transform: translateX(120%); opacity: 0.0; }
+              }
+              `}
+            </style>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+              <strong>Chargement</strong>
+              <button className="icon-btn" onClick={()=> setShowLoading(false)} aria-label="Fermer">×</button>
+            </div>
+            <div style={{ flex: 1, display: 'grid', gridTemplateRows: '1fr auto', overflow: 'hidden' }}>
+              <div style={{ position: 'relative', overflow: 'auto', padding: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
+                <pre
+                  style={{
+                    margin: 0,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                    fontSize: 10,
+                    lineHeight: 1,
+                    whiteSpace: 'pre',
+                    color: '#9CA3AF',
+                    textShadow: '0 0 1px rgba(0,0,0,0.3)',
+                    animation: 'gentlePulse 2.4s ease-in-out infinite'
+                  }}
+                >{asciiText || asciiArt || 'Loading…'}</pre>
+                {/* horizontal shimmer to make animation obvious */}
+                <div style={{
+                  pointerEvents: 'none',
+                  position: 'absolute',
+                  top: 0, bottom: 0,
+                  left: 0, width: '40%',
+                  background: 'linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.2), rgba(255,255,255,0))',
+                  filter: 'blur(2px)',
+                  animation: 'shimmerX 2.2s linear infinite'
+                }} />
+              </div>
+              <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="muted">Prévisualisation — prototype de page de chargement</div>
+                <div style={{ fontWeight: 600, color: '#374151' }}>
+                  Loading{'.'.repeat(dots)}
+                </div>
+              </div>
+            </div>
+            {/* scanline overlay */}
+            <div style={{
+              pointerEvents: 'none',
+              position: 'absolute',
+              left: 0, right: 0, top: 0, bottom: 0,
+              background: 'linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(31,41,55,0.25) 50%, rgba(255,255,255,0) 100%)',
+              animation: 'scan 2.4s linear infinite'
+            }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
