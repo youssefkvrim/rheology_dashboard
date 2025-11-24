@@ -37,6 +37,7 @@ export default function Loading() {
   const [frame, setFrame] = useState<number>(0);
   const rafRef = useRef<number | null>(null);
   const lastTs = useRef<number>(0);
+  const [dots, setDots] = useState<number>(0);
 
   // Character groups to cycle through, preserving overall shape
   const nextChar = (ch: string, step: number): string => {
@@ -87,73 +88,45 @@ export default function Loading() {
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, []);
 
+  useEffect(() => {
+    const id = setInterval(() => setDots(d => (d + 1) % 4), 420);
+    return () => clearInterval(id);
+  }, []);
+
   return (
     <div
       role="document"
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'var(--panel)',
+        background: '#ffffff',
         color: '#9CA3AF',
         zIndex: 2000,
-        display: 'grid',
-        gridTemplateRows: 'auto 1fr auto'
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16
       }}
     >
-      <style>
-        {`
-        @keyframes scan {
-          0% { transform: translateY(-100%); opacity: 0.0; }
-          10% { opacity: 0.18; }
-          50% { opacity: 0.14; }
-          100% { transform: translateY(100%); opacity: 0.0; }
-        }
-        @keyframes shimmerX {
-          0% { transform: translateX(-120%); opacity: 0.0; }
-          10% { opacity: 0.22; }
-          50% { opacity: 0.18; }
-          100% { transform: translateX(120%); opacity: 0.0; }
-        }
-        `}
-      </style>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-        <strong>Chargement</strong>
-        <a href="/" className="icon-btn" aria-label="Fermer" style={{ textDecoration: 'none' }}>×</a>
-      </div>
-      <div style={{ position: 'relative', overflow: 'auto', padding: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
         <pre
           style={{
             margin: 0,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-            fontSize: 10,
+            fontSize: 8,
             lineHeight: 1,
             whiteSpace: 'pre',
-            textShadow: '0 0 1px rgba(0,0,0,0.3)'
+            textAlign: 'left',
+            color: '#9CA3AF',
+            maxWidth: '90vw',
+            maxHeight: '70vh',
+            overflow: 'auto'
           }}
         >{animatedText}</pre>
-        {/* horizontal shimmer to emphasize motion */}
-        <div style={{
-          pointerEvents: 'none',
-          position: 'absolute',
-          top: 0, bottom: 0,
-          left: 0, width: '40%',
-          background: 'linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.2), rgba(255,255,255,0))',
-          filter: 'blur(2px)',
-          animation: 'shimmerX 2.2s linear infinite'
-        }} />
-        {/* scanline overlay */}
-        <div style={{
-          pointerEvents: 'none',
-          position: 'absolute',
-          left: 0, right: 0, top: 0, bottom: 0,
-          background: 'linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(31,41,55,0.25) 50%, rgba(255,255,255,0) 100%)',
-          animation: 'scan 2.4s linear infinite'
-        }} />
-      </div>
-      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="muted">Page de test — animation ASCII</div>
-        <div style={{ fontWeight: 600, color: '#374151' }}>
-          Loading…
+        <div style={{ alignSelf: 'center', fontSize: 18, fontWeight: 600, color: '#9CA3AF' }}>
+          <span style={{ display: 'inline-block', textAlign: 'left', minWidth: 120 }}>
+            {`Loading${'.'.repeat(dots)}`}
+          </span>
         </div>
       </div>
     </div>
