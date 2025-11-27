@@ -139,9 +139,14 @@ app.get('/api/rheology/all', async (req, res) => {
     if (includeBounds) {
       const rq = pool.request();
       rq.input('slurryId', sql.VarChar(64), slurryId);
+      // Get latest bounds per parameter using ROW_NUMBER
       const { recordset: brows } = await rq.query(
-        `SELECT parameter, usl, lsl, MAX(timestamp) as ts
-         FROM rheology WHERE id_slurry=@slurryId GROUP BY parameter`
+        `WITH ranked AS (
+           SELECT [parameter], [usl], [lsl], [timestamp],
+                  ROW_NUMBER() OVER (PARTITION BY [parameter] ORDER BY [timestamp] DESC) as rn
+           FROM [rheology] WHERE [id_slurry]=@slurryId AND ([usl] IS NOT NULL OR [lsl] IS NOT NULL)
+         )
+         SELECT [parameter], [usl], [lsl] FROM ranked WHERE rn=1`
       );
       const bounds = brows.map((r) => ({ key: r.parameter, low: r.lsl ?? null, high: r.usl ?? null }));
       return res.json({ series: map, bounds });
@@ -159,9 +164,14 @@ app.get('/api/rheology/bounds', async (req, res) => {
     const pool = await getPool();
     const rq = pool.request();
     rq.input('slurryId', sql.VarChar(64), slurryId);
+    // Get latest bounds per parameter using ROW_NUMBER to pick most recent row
     const { recordset: rows } = await rq.query(
-      `SELECT parameter, usl, lsl, MAX(timestamp) as ts
-       FROM rheology WHERE id_slurry=@slurryId GROUP BY parameter`
+      `WITH ranked AS (
+         SELECT [parameter], [usl], [lsl], [timestamp],
+                ROW_NUMBER() OVER (PARTITION BY [parameter] ORDER BY [timestamp] DESC) as rn
+         FROM [rheology] WHERE [id_slurry]=@slurryId AND ([usl] IS NOT NULL OR [lsl] IS NOT NULL)
+       )
+       SELECT [parameter], [usl], [lsl] FROM ranked WHERE rn=1`
     );
     const mapKey = (p) => p === 'density' ? 'densite'
       : p === 'viscosity' ? 'viscosite'

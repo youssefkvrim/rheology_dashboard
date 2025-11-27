@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { apiHealth } from '../services/api';
 // Fallback raw bundle (dev-only). Primary source is /public/loading_page/ascii.txt
 // @ts-ignore
 import asciiRaw from '../../loading_page/ascii.txt?raw';
@@ -12,7 +14,7 @@ function useAsciiSource(): string {
         let src: string | null = null;
         // Prefer public-served asset
         try {
-          const res = await fetch('/loading_page/ascii.txt', { cache: 'no-store' });
+          const res = await fetch('./loading_page/ascii.txt', { cache: 'no-store' });
           if (res.ok) src = await res.text();
         } catch {}
         // Fallback to bundled raw
@@ -31,23 +33,61 @@ function useAsciiSource(): string {
   return text;
 }
 
-export default function Loading() {
+export type LoadingProps = {
+  minMs?: number;         // minimum display time (default 3000)
+  serverTimeoutMs?: number; // extra time if server unreachable (default 7000 total)
+  onReady?: () => void;   // callback when ready to proceed
+};
+
+export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady }: LoadingProps) {
+  const navigate = useNavigate();
   const ascii = useAsciiSource();
   const baseLines = useMemo(() => ascii.split('\n'), [ascii]);
   const [frame, setFrame] = useState<number>(0);
   const rafRef = useRef<number | null>(null);
   const lastTs = useRef<number>(0);
   const [dots, setDots] = useState<number>(0);
+  const startRef = useRef<number>(Date.now());
+  const [serverOk, setServerOk] = useState<boolean | null>(null); // null = checking
+  const [done, setDone] = useState<boolean>(false);
+
+  // Check server health once
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const ok = await apiHealth();
+        if (!cancelled) setServerOk(ok);
+      } catch {
+        if (!cancelled) setServerOk(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Determine when to finish
+  useEffect(() => {
+    if (done) return;
+    const elapsed = () => Date.now() - startRef.current;
+    const check = () => {
+      if (serverOk === null) return; // still checking
+      const required = serverOk ? minMs : serverTimeoutMs;
+      if (elapsed() >= required) {
+        setDone(true);
+        if (onReady) onReady();
+        else navigate('/');
+      }
+    };
+    check();
+    const id = setInterval(check, 200);
+    return () => clearInterval(id);
+  }, [serverOk, minMs, serverTimeoutMs, done, onReady, navigate]);
 
   // Character groups to cycle through, preserving overall shape
   const nextChar = (ch: string, step: number): string => {
-    // Group A: fine lines
     const gA = ['-', '=', '+'];
-    // Group B: heavy dots
     const gB = ['*', '#'];
-    // Numbers swell lightly
     const gN = ['0','1','2','3','4','5','6','7','8','9'];
-    // Spaces and others remain stable
     if (gA.includes(ch)) return gA[(gA.indexOf(ch) + step) % gA.length];
     if (gB.includes(ch)) return gB[(gB.indexOf(ch) + step) % gB.length];
     if (gN.includes(ch)) return gN[(gN.indexOf(ch) + step) % gN.length];
@@ -57,14 +97,13 @@ export default function Loading() {
   // Build animated text by diagonally offsetting cycle per position
   const animatedText = useMemo(() => {
     if (!baseLines.length) return '';
-    const period = 4; // 4-step small cycles
+    const period = 4;
     const linesOut: string[] = [];
     for (let r = 0; r < baseLines.length; r++) {
       const line = baseLines[r];
       let out = '';
       for (let c = 0; c < line.length; c++) {
         const ch = line[c];
-        // Diagonal wave: offset grows with row and col; frame advances over time
         const offset = (frame + r + Math.floor(c / 2)) % period;
         out += nextChar(ch, offset);
       }
@@ -74,7 +113,6 @@ export default function Loading() {
   }, [baseLines, frame]);
 
   useEffect(() => {
-    // rAF-driven timer with ~90ms cadence for smoothness without burning CPU
     const loop = (t: number) => {
       if (!lastTs.current) lastTs.current = t;
       const dt = t - lastTs.current;
@@ -132,5 +170,3 @@ export default function Loading() {
     </div>
   );
 }
-
-

@@ -6,11 +6,11 @@ import { useChartParams } from '../store/chartParams';
 import { ParamsModal } from '../components/ParamsModal';
 import { MetricPanel } from '../components/MetricPanel';
 import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
-import { fetchRheologyAll } from '../services/api';
+import { fetchRheologyAll, ASSET_BASE } from '../services/api';
 
 // TEST ONLY: Hardcoded ML output path used across all barbotines for preview.
 // Replace with real data binding and remove hardcoding.
-const ML_BASE = '/assets/Plaque%20ML/output/2CN2_007_2_03-11-2025T100656+1';
+const ML_BASE = `${ASSET_BASE}/Plaque%20ML/output/2CN2_007_2_03-11-2025T100656+1`;
 
 function AiAnalysis() {
   const [summary, setSummary] = useState<Record<string, string> | null>(null);
@@ -206,6 +206,8 @@ export default function Detail() {
   const [dbSeries, setDbSeries] = useState<null | { densite: { t:number; v:number }[]; viscosite: { t:number; v:number }[]; ph: { t:number; v:number }[]; temperature: { t:number; v:number }[] }>(null);
   const [pcDb, setPcDb] = useState<null | { t:number; v:number }[]>(null);
   const [h2oDb, setH2oDb] = useState<null | { t:number; v:number }[]>(null);
+  const [siliceDb, setSiliceDb] = useState<null | { t:number; v:number }[]>(null);
+  const [grainsDb, setGrainsDb] = useState<null | { t:number; v:number }[]>(null);
 
   const current = useMemo(()=> barbotines.find(b => b.id === id) || null, [barbotines, id]);
   const sid = (current && (current as any).slurryId) as string | undefined;
@@ -214,7 +216,8 @@ export default function Detail() {
     let cancelled = false;
     (async () => {
       try {
-        const { series, bounds } = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O'], true);
+        // Include silice and grain in the fetch
+        const { series, bounds } = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O','silice','grain'], true);
         if (cancelled) return;
         setDbSeries({
           densite: (series['density']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
@@ -224,6 +227,8 @@ export default function Detail() {
         });
         setPcDb((series['pc']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
         setH2oDb((series['H2O']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
+        setSiliceDb((series['silice']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
+        setGrainsDb((series['grain']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
         // Apply latest bounds (USL/LSL)
         const keyMap: Record<string, any> = { density: 'densite', viscosity: 'viscosite', pH: 'ph', temperature: 'temperature', H2O: 'h2o', pc: 'pc', silice: 'silice', grain: 'grains' };
         if (Array.isArray(bounds)) {
@@ -267,7 +272,8 @@ export default function Detail() {
   const tempSource = dbSeries ? filterByRange(dbSeries.temperature, tempRange, tempAnchor) : [];
   const phSource = dbSeries ? filterByRange(dbSeries.ph, phRange, phAnchor) : [];
   const densiteData = useMemo(() => densSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(3)) })), [densSource]);
-  const viscositeData = useMemo(() => viscSource.map(p => ({ time: p.t, value: Math.round(p.v) })), [viscSource]);
+  // Preserve decimal values for viscosity (don't round)
+  const viscositeData = useMemo(() => viscSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [viscSource]);
   const phData = useMemo(() => phSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [phSource]);
   const tempData = useMemo(() => tempSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [tempSource]);
   const densAvg = useMemo(() => densiteData.length ? Number((densiteData.reduce((s,d)=>s+d.value,0)/densiteData.length).toFixed(3)) : null, [densiteData]);
@@ -335,6 +341,26 @@ export default function Detail() {
     return pcHistData.map(d => ({ t: d.t, v: pcConv.to(d.v), avg: avg != null ? pcConv.to(avg) : undefined }));
   }, [pcHistData, pcConv]);
   const pcBoundsConv = useMemo(() => ({ low: (scopedBounds.pc?.low==null)?null:pcConv.to(scopedBounds.pc.low as number), high: (scopedBounds.pc?.high==null)?null:pcConv.to(scopedBounds.pc.high as number) }), [scopedBounds.pc, pcConv]);
+
+  // Silice panel data
+  const silicePanelData = useMemo(() => {
+    const src = (siliceDb || []).map(p => ({ t: Number(p.t), v: Number(p.v) }));
+    const data = filterByRange(src, siliceRange);
+    if (!data.length) return [] as { t:number; v:number; avg?: number }[];
+    const avg = Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3));
+    return data.map(d => ({ t: d.t, v: d.v, avg }));
+  }, [siliceDb, siliceRange, specStart, specEnd]);
+  const siliceBoundsConv = useMemo(() => ({ low: scopedBounds.silice?.low ?? null, high: scopedBounds.silice?.high ?? null }), [scopedBounds.silice]);
+
+  // Grains panel data
+  const grainsPanelData = useMemo(() => {
+    const src = (grainsDb || []).map(p => ({ t: Number(p.t), v: Number(p.v) }));
+    const data = filterByRange(src, grainsRange);
+    if (!data.length) return [] as { t:number; v:number; avg?: number }[];
+    const avg = Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3));
+    return data.map(d => ({ t: d.t, v: d.v, avg }));
+  }, [grainsDb, grainsRange, specStart, specEnd]);
+  const grainsBoundsConv = useMemo(() => ({ low: scopedBounds.grains?.low ?? null, high: scopedBounds.grains?.high ?? null }), [scopedBounds.grains]);
 
   const pcYStats = useMemo(() => {
     if (!pcHistData.length) return { min: 0, max: 0 };
@@ -789,7 +815,7 @@ export default function Detail() {
                   if (localSeries.length) {
                     const last = localSeries[localSeries.length - 1].v;
                     addCoverPowerResult(last);
-                    setLastPlaqueSrc('/assets/plaque-pickup.jpg');
+                    setLastPlaqueSrc(`${ASSET_BASE}/plaque-pickup.jpg`);
                   }
                 }
               }, 500);
@@ -832,8 +858,8 @@ export default function Detail() {
             <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ width: 320, height: 320, cursor: 'zoom-in' }} onClick={()=> setImageModal('photo')}>
                 <picture>
-                  <source srcSet={(lastPlaqueSrc || '/assets/plaque-pickup.webp').replace('.jpg', '.webp')} type="image/webp" />
-                  <img src={lastPlaqueSrc || '/assets/plaque-pickup.jpg'} alt="Plaque essai" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                  <source srcSet={(lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.webp`).replace('.jpg', '.webp')} type="image/webp" />
+                  <img src={lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.jpg`} alt="Plaque essai" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                 </picture>
               </div>
             </div>
@@ -843,8 +869,8 @@ export default function Detail() {
             <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ width: 320, height: 320, cursor: 'zoom-in', position: 'relative' }} onClick={()=> setImageModal('ai')}>
                 <picture>
-                  <source srcSet={'/assets/plaque-pickup_analysed.webp'} type="image/webp" />
-                  <img src={'/assets/plaque-pickup_analysed.webp'} alt="Plaque analysée" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                  <source srcSet={`${ASSET_BASE}/plaque-pickup_analysed.webp`} type="image/webp" />
+                  <img src={`${ASSET_BASE}/plaque-pickup_analysed.webp`} alt="Plaque analysée" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                 </picture>
                 <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(16,22,83,0.9)', color: '#e5e7eb', padding: '6px 8px', borderRadius: 6, fontSize: 12, lineHeight: 1.2 }}>
                   <div><strong>Count :</strong> 209</div>
@@ -872,7 +898,7 @@ export default function Detail() {
             {imageModal === 'photo' ? (
               <div className="modal-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
                 <img
-                  src={lastPlaqueSrc || '/assets/plaque-pickup.jpg'}
+                  src={lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.jpg`}
                   alt="Plaque essai"
                   style={{ width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', borderRadius: 8, border: '1px solid var(--border)', display: 'block', objectFit: 'contain' }}
                 />
@@ -1213,10 +1239,12 @@ export default function Detail() {
               <MetricPanel
                 title="Silice"
                 unitLabel={scopedParams.silice.unit}
-                data={[]}
+                data={silicePanelData}
                 avgOn={scopedParams.silice.avgOn}
                 trendOn={scopedParams.silice.trendOn}
                 deltaY={scopedParams.silice.deltaY}
+                bounds={silicePanelData.length ? siliceBoundsConv : undefined}
+                critPct={siliceCritOn ? siliceCritPct : undefined}
                 color="#a78bfa"
                 trendWindowMs={scopedParams.silice.trendWindowMs}
                 rangeKey={siliceRange}
@@ -1267,10 +1295,12 @@ export default function Detail() {
               <MetricPanel
                 title="Grains"
                 unitLabel={scopedParams.grains.unit}
-                data={[]}
+                data={grainsPanelData}
                 avgOn={scopedParams.grains.avgOn}
                 trendOn={scopedParams.grains.trendOn}
                 deltaY={scopedParams.grains.deltaY}
+                bounds={grainsPanelData.length ? grainsBoundsConv : undefined}
+                critPct={grainsCritOn ? grainsCritPct : undefined}
                 color="#60a5fa"
                 trendWindowMs={scopedParams.grains.trendWindowMs}
                 rangeKey={grainsRange}

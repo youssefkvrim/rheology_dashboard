@@ -189,18 +189,23 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     })();
   }, [bounds]);
 
+  // Debounced save of boundsById to prevent excessive API calls
+  const boundsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
       localStorage.setItem(`boundsById:${userId}`, JSON.stringify(boundsById));
     } catch { /* ignore */ }
-    (async () => {
+    // Debounce the API call - wait 2s after last change
+    if (boundsDebounceRef.current) clearTimeout(boundsDebounceRef.current);
+    boundsDebounceRef.current = setTimeout(async () => {
       try {
         const userId = sessionStorage.getItem('userId') || '';
         if (!userId) return;
         await putUserPrefs(userId, { boundsById });
       } catch { /* ignore */ }
-    })();
+    }, 2000);
+    return () => { if (boundsDebounceRef.current) clearTimeout(boundsDebounceRef.current); };
   }, [boundsById]);
 
   useEffect(() => {
@@ -374,6 +379,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const repo = useMemo<MetricsRepository>(() => new ApiMetricsRepository(), []);
 
+  // Stable callback to prevent infinite re-renders in consumers
+  const setBoundsForStable = useCallback((id: string, metric: keyof AppState['bounds'], next: Bounds) => {
+    setBoundsById(prev => {
+      const base = prev[id] || bounds;
+      return { ...prev, [id]: { ...base, [metric]: next } };
+    });
+  }, [bounds]);
+
   const value: AppState = {
     seed: seedParam,
     barbotines,
@@ -384,10 +397,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const b = boundsById[id];
       return b ? b : bounds;
     },
-    setBoundsFor: (id: string, metric, next) => setBoundsById(prev => {
-      const base = prev[id] || bounds;
-      return { ...prev, [id]: { ...base, [metric]: next } };
-    }),
+    setBoundsFor: setBoundsForStable,
     overrideLog,
     startMassTest,
     addOverride,

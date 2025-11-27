@@ -7,9 +7,20 @@ import { ChartParamsProvider } from './store/chartParams';
 import { AuthProvider } from './features/auth/AuthContext';
 import './index.css';
 
+// Detect basename for reverse proxy: if URL contains /proxy/3000, use everything up to and including it
+function getBasename(): string {
+  const path = window.location.pathname;
+  // Match patterns like /studio/.../proxy/3000 or /proxy/3000
+  const match = path.match(/^(.*\/proxy\/\d+)/);
+  if (match) return match[1];
+  // Fallback: use import.meta.env.BASE_URL (set by Vite's base config)
+  const base = (import.meta as any).env?.BASE_URL || '/';
+  return base === './' ? '' : base.replace(/\/$/, '');
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={getBasename()}>
       <AuthProvider>
         <AppStateProvider>
           <ChartParamsProvider>

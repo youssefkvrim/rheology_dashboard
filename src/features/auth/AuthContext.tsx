@@ -153,18 +153,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await keycloak.login({ redirectUri });
       },
       logout: async () => {
+        sessionStorage.removeItem('authed');
+        sessionStorage.removeItem('userId');
+        sessionStorage.removeItem('email');
+        sessionStorage.removeItem('role');
+        setIsAuthenticated(false);
+        setUser(null);
         if (!keycloak) {
-          sessionStorage.removeItem('authed');
-          sessionStorage.removeItem('userId');
-          sessionStorage.removeItem('email');
-          sessionStorage.removeItem('role');
-          setIsAuthenticated(false);
-          setUser(null);
-          window.location.href = '/';
+          // Non-SSO logout: just reload current page (will show login)
+          window.location.reload();
           return;
         }
+        // SSO logout: redirect back to current app base path
+        const path = window.location.pathname;
+        const proxyMatch = path.match(/^(.*\/proxy\/\d+)/);
+        const basePath = proxyMatch ? proxyMatch[1] + '/' : '/';
         const redirectUri =
-          (import.meta as any)?.env?.VITE_SSO_LOGOUT_REDIRECT_URI || window.location.origin + '/';
+          (import.meta as any)?.env?.VITE_SSO_LOGOUT_REDIRECT_URI || window.location.origin + basePath;
         await keycloak.logout({ redirectUri });
       },
     };

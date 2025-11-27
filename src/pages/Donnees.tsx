@@ -102,10 +102,12 @@ export default function Donnees() {
   const [expMetricsMulti, setExpMetricsMulti] = useState<ChartMetricKey[]>(['densite','viscosite','pc']);
   const [metricsOpen, setMetricsOpen] = useState<boolean>(false);
 
-  // Panel 4: Historique - default to last month (same day) from 00:00 to today 23:59
+  // Panel 4: Historique - start empty (user picks dates)
   const now = Date.now();
   const [histStart, setHistStart] = useState<string>('');
   const [histEnd, setHistEnd] = useState<string>('');
+  // Flag to load all data once user clicks "Tout" checkbox
+  const [histLoadAll, setHistLoadAll] = useState<boolean>(false);
 
   const metricOrder: TableMetricKey[] = ['pc','viscosity','density','pH','H2O','temperature','silice','grain'];
   const headerLabels: Record<TableMetricKey, string> = {
@@ -149,7 +151,7 @@ export default function Donnees() {
         // Prefer public asset (served by Vite) to avoid bundling edge cases
         let txt: string | null = null;
         try {
-          const res = await fetch('/loading_page/ascii.txt', { cache: 'no-store' });
+          const res = await fetch('./loading_page/ascii.txt', { cache: 'no-store' });
           if (res.ok) txt = await res.text();
         } catch {}
         // Fallback to bundled raw import
@@ -202,10 +204,21 @@ export default function Donnees() {
   useEffect(() => {
     // Check backend reachability at entry
     apiHealth().then(setDbReachable).catch(()=>setDbReachable(false));
+  }, []);
+
+  // Only load history when dates are explicitly provided OR histLoadAll is checked
+  useEffect(() => {
+    const s = Date.parse(histStart);
+    const e = Date.parse(histEnd);
+    const hasDates = Number.isFinite(s) && Number.isFinite(e);
+    // If no dates provided and not loading all, show empty state
+    if (!hasDates && !histLoadAll) {
+      setHistoryMap({});
+      setDayList([]);
+      return;
+    }
     let cancelled = false;
     async function load() {
-      const s = Date.parse(histStart);
-      const e = Date.parse(histEnd);
       let startTs = Number.isFinite(s) ? s : NaN;
       let endTs = Number.isFinite(e) ? e : NaN;
       let globalMin = Number.POSITIVE_INFINITY;
@@ -262,38 +275,24 @@ export default function Donnees() {
           } catch {}
         }));
         if (cancelled) return;
-        // If no explicit start/end provided, derive from global min/max and update inputs
-        if (!(Number.isFinite(s) && Number.isFinite(e)) && Number.isFinite(globalMin) && Number.isFinite(globalMax)) {
+        // If loading all data and no explicit dates, auto-fill date inputs from global range
+        if (histLoadAll && !(Number.isFinite(s) && Number.isFinite(e)) && Number.isFinite(globalMin) && Number.isFinite(globalMax)) {
           const dStart = new Date(globalMin); dStart.setHours(0,0,0,0);
           const dEnd = new Date(globalMax); dEnd.setHours(23,59,0,0);
           startTs = dStart.getTime(); endTs = dEnd.getTime();
           setHistStart(toLocalDateTimeInput(startTs));
           setHistEnd(toLocalDateTimeInput(endTs));
-          // Re-filter the map for the computed range
-          const filtered: HistoryMap = {};
-          const daysFiltered = new Set<string>();
-          Object.entries(nextMap).forEach(([dk, rows]) => {
-            const [y,m,d] = dk.split('-').map(Number);
-            const at = new Date(y!, (m!-1), d!).getTime();
-            if (at >= startTs && at <= endTs) {
-              filtered[dk] = rows; daysFiltered.add(dk);
-            }
-          });
-          const sortedDays = Array.from(daysFiltered).sort();
-          setHistoryMap(filtered);
-          setDayList(sortedDays);
-        } else {
-          const sortedDays = Array.from(daysSet).sort();
-          setHistoryMap(nextMap);
-          setDayList(sortedDays);
         }
+        const sortedDays = Array.from(daysSet).sort();
+        setHistoryMap(nextMap);
+        setDayList(sortedDays);
       } finally {
         if (!cancelled) setLoadingHistory(false);
       }
     }
     load();
     return () => { cancelled = true; };
-  }, [histStart, histEnd, barbotines]);
+  }, [histStart, histEnd, barbotines, histLoadAll]);
 
   return (
     <div>
@@ -424,9 +423,23 @@ export default function Donnees() {
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Période</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <label>Début</label>
-              <input type="datetime-local" value={expStart} onChange={e => setExpStart(e.target.value)} />
+              <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={expStart} onChange={e => setExpStart(e.target.value)} />
               <label>Fin</label>
-              <input type="datetime-local" value={expEnd} onChange={e => setExpEnd(e.target.value)} />
+              <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={expEnd} onChange={e => setExpEnd(e.target.value)} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!expStart && !expEnd}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      // Clear dates to export all data
+                      setExpStart('');
+                      setExpEnd('');
+                    }
+                  }}
+                />
+                Tout
+              </label>
               <button
                 disabled={!dbReachable}
                 onClick={async ()=> {
@@ -461,12 +474,12 @@ export default function Donnees() {
 
       {/* Panel 4: Historique sous forme de tableaux */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Historique (tableau)</h3>
+        <h3>Historique</h3>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <label>Début</label>
-          <input type="datetime-local" value={histStart} onChange={e => setHistStart(e.target.value)} />
+          <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={histStart} onChange={e => { setHistStart(e.target.value); setHistLoadAll(false); }} />
           <label>Fin</label>
-          <input type="datetime-local" value={histEnd} onChange={e => setHistEnd(e.target.value)} />
+          <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={histEnd} onChange={e => { setHistEnd(e.target.value); setHistLoadAll(false); }} />
         </div>
 
         <div style={{ marginTop: 10 }}>
@@ -564,7 +577,7 @@ export default function Donnees() {
 
       {/* TESTING ONLY: SQL generation scratch panel (no DB writes) */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>SQL (Testing only — remove before production)</h3>
+        <h3>SQL code (to be removed before production)</h3>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <textarea readOnly value={sqlEdits.join('\n')}
             placeholder="Generated SQL statements appear here..."
@@ -572,15 +585,6 @@ export default function Donnees() {
         </div>
         <div className="row" style={{ gap: 8, marginTop: 8 }}>
           <button onClick={()=> setSqlEdits([])}>Clear</button>
-        </div>
-      </div>
-
-      {/* TESTING ONLY: trigger ASCII loading overlay (remove before production) */}
-      <div className="panel" style={{ marginTop: 16 }}>
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button title="TEST ONLY — remove before production" onClick={()=> navigate('/loading')}>
-            Afficher loading (test)
-          </button>
         </div>
       </div>
 

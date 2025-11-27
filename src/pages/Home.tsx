@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import { useAppState } from '../store/appState';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
-import { fetchRheologyLatestAll, fetchLatestBounds, apiHealth } from '../services/api';
+import { fetchRheologyLatestAll, fetchLatestBounds, apiHealth, ASSET_BASE } from '../services/api';
 
 function badgeFromViscosity(v: number, low: number, high: number) {
   if (v < low * 0.95 || v > high * 1.05) return { cls: 'err', label: 'Warning' };
@@ -47,14 +47,19 @@ export default function Home() {
   }, [barbotines.length]);
 
   // Proactively load latest bounds from DB for each slurry and store per-barbotine
+  // Fetch bounds once per slurry, not on every render
+  const boundsFetchedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const sidToId = new Map<string, string>();
     barbotines.forEach(b => {
       const sid = (b as any).slurryId as string | undefined;
       if (sid) sidToId.set(sid, b.id);
     });
-    const slurries = Array.from(sidToId.keys());
+    // Only fetch for slurries not yet fetched
+    const slurries = Array.from(sidToId.keys()).filter(sid => !boundsFetchedRef.current.has(sid));
     if (!slurries.length) return;
+    // Mark as fetched immediately to prevent duplicate calls
+    slurries.forEach(sid => boundsFetchedRef.current.add(sid));
     let cancelled = false;
     (async () => {
       try {
@@ -96,10 +101,10 @@ export default function Home() {
     const last12 = doseRateHistory.filter(p => p.t >= now - 12 * 60 * 60 * 1000);
     if (last12.length >= 2) {
       const first = last12[0].v; const last = last12[last12.length - 1].v;
-      if (last > first + 0.0005) return '/assets/upward.svg';
-      if (last < first - 0.0005) return '/assets/downward.svg';
+      if (last > first + 0.0005) return `${ASSET_BASE}/upward.svg`;
+      if (last < first - 0.0005) return `${ASSET_BASE}/downward.svg`;
     }
-    return '/assets/constant.svg';
+    return `${ASSET_BASE}/constant.svg`;
   }, [doseRateHistory]);
 
   // Debugger: server status + website errors + fetch counters
@@ -181,9 +186,7 @@ export default function Home() {
             if (ga !== gb) return ga - gb;
             return a.name.localeCompare(b.name);
           });
-          // TEST ONLY: manual test card - remove in production
-          const testCard = { id: 'test', name: 'test', online: false, last: null } as any;
-          const finalList = [...sorted, testCard, { id: '__new__', name: 'Ajouter une barbotine', online: false, last: null } as any];
+          const finalList = [...sorted, { id: '__new__', name: 'Ajouter une barbotine', online: false, last: null } as any];
           return finalList.map(b => {
           const sid = (b as any).slurryId as string | undefined;
           const rec = (sid && latest && latest[sid]) || {} as any;
@@ -219,9 +222,9 @@ export default function Home() {
           const badgeV = statusFromBounds(showV? Number(lastV.v): null, 'viscosite');
           const badgePC = statusFromBounds(showPC? Number(lastPC.v): null, 'pc');
           const trendIcon = (()=>{
-            if (!showH2O || lastH2O?.prevV==null) return '/assets/constant.svg';
+            if (!showH2O || lastH2O?.prevV==null) return `${ASSET_BASE}/constant.svg`;
             const lv = Number(lastH2O.v); const pv = Number(lastH2O.prevV);
-            if (lv > pv) return '/assets/upward.svg'; if (lv < pv) return '/assets/downward.svg'; return '/assets/constant.svg';
+            if (lv > pv) return `${ASSET_BASE}/upward.svg`; if (lv < pv) return `${ASSET_BASE}/downward.svg`; return `${ASSET_BASE}/constant.svg`;
           })();
           return (
             <div key={b.id} className={`card card-bb`} style={{ opacity: isOnline ? 1 : 0.6, cursor: 'pointer' }} onClick={() => {
@@ -249,7 +252,7 @@ export default function Home() {
                       ) : (
                         <span className="dot" style={{ background: 'var(--muted)' }}></span>
                       )}
-                      <div>Densité: <strong>{showD ? Number(lastD.v).toFixed(3)+' g/cm³' : '—'}</strong></div>
+                      <div>Densité: <span style={{ fontWeight: 500, fontSize: '0.95em' }}>{showD ? Number(lastD.v).toFixed(3)+' g/cm³' : '—'}</span></div>
                     </div>
                     {badgeD && <span className={`badge ${badgeD.cls}`}>{badgeD.label}</span>}
                   </div>
@@ -261,7 +264,7 @@ export default function Home() {
                       ) : (
                         <span className="dot" style={{ background: 'var(--muted)' }}></span>
                       )}
-                      <div>Viscosité: <strong>{showV ? Math.round(Number(lastV.v))+' mPa·s' : '—'}</strong></div>
+                      <div>Viscosité: <span style={{ fontWeight: 500, fontSize: '0.95em' }}>{showV ? Math.round(Number(lastV.v))+' mPa·s' : '—'}</span></div>
                     </div>
                     {badgeV && <span className={`badge ${badgeV.cls}`}>{badgeV.label}</span>}
                   </div>
@@ -273,7 +276,7 @@ export default function Home() {
                       ) : (
                         <span className="dot" style={{ background: 'var(--muted)' }}></span>
                       )}
-                      <div>PC: <strong>{showPC ? Number(lastPC.v).toFixed(2)+' g' : '—'}</strong></div>
+                      <div>PC: <span style={{ fontWeight: 500, fontSize: '0.95em' }}>{showPC ? Number(lastPC.v).toFixed(2)+' g' : '—'}</span></div>
                     </div>
                     {badgePC && <span className={`badge ${badgePC.cls}`}>{badgePC.label}</span>}
                   </div>
@@ -285,7 +288,7 @@ export default function Home() {
                       ) : (
                         <span className="dot" style={{ background: 'var(--muted)' }}></span>
                       )}
-                      <div>Débit H₂O: <strong>{showH2O ? Number(lastH2O.v).toFixed(3)+' L/h' : '—'}</strong></div>
+                      <div>Débit H₂O: <span style={{ fontWeight: 500, fontSize: '0.95em' }}>{showH2O ? Number(lastH2O.v).toFixed(3)+' L/h' : '—'}</span></div>
                     </div>
                     <img src={trendIcon} alt="trend" style={{ width: 16, height: 16 }} />
                   </div>
@@ -317,7 +320,7 @@ export default function Home() {
             className="icon-btn"
             style={{ width: 48, height: 48, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e5e7eb' }}
           >
-            <img src="/assets/bug.svg" alt="bug" style={{ width: 22, height: 22 }} />
+            <img src={`${ASSET_BASE}/bug.svg`} alt="bug" style={{ width: 22, height: 22 }} />
           </button>
         ) : (
           <div className="panel" style={{ width: 280, padding: 10, maxHeight: '60vh', overflowY: 'auto' }}>

@@ -11,8 +11,7 @@ import Reset from '../pages/Reset';
 import Loading from '../pages/Loading';
 import '../app.css';
 import { useAuth } from '../features/auth/AuthContext';
-import { getUserPrefs, putUserPrefs } from '../services/api';
-import { apiHealth } from '../services/api';
+import { getUserPrefs, putUserPrefs, apiHealth, ASSET_BASE } from '../services/api';
 import { useAppState } from '../store/appState';
 
 export function App() {
@@ -76,12 +75,10 @@ export function App() {
     })();
   }, [theme, isAuthenticated, user?.username]);
 
-  if (!ready) {
-    return <Loading />;
-  }
-
-  if (isAuthenticated && initialDataLoading && !dataGateTimedOut) {
-    return <Loading />;
+  // Show loading page: 3s minimum, 7s if server unreachable
+  // The Loading component handles its own timing and navigation
+  if (!ready || (isAuthenticated && initialDataLoading && !dataGateTimedOut)) {
+    return <Loading minMs={3000} serverTimeoutMs={7000} />;
   }
 
   if (!isAuthenticated) {
@@ -102,7 +99,7 @@ export function App() {
       <nav className="nav">
         <div className="brand" title="Safran" style={{ cursor: 'pointer' }}>
           <NavLink to="/" style={{ display: 'inline-flex', alignItems: 'center' }}>
-            <img src="/assets/SAF.PA_BIG.svg" className="logo" alt="Safran" />
+            <img src={`${ASSET_BASE}/SAF.PA_BIG.svg`} className="logo" alt="Safran" />
           </NavLink>
         </div>
         <div className="links" style={{ alignItems: 'center' }}>
@@ -110,9 +107,9 @@ export function App() {
           <NavLink to="/donnees" className={({ isActive }) => isActive ? 'active' : ''}>Données</NavLink>
           <button aria-label="Basculer thème" className="icon-btn" title={theme === 'light' ? 'Thème sombre' : 'Thème clair'} onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>
             {theme === 'light' ? (
-              <img key="sun" className="icon-swap enter" src="/assets/sun.svg" alt="sun" style={{ width: 18, height: 18 }} />
+              <img key="sun" className="icon-swap enter" src={`${ASSET_BASE}/sun.svg`} alt="sun" style={{ width: 18, height: 18 }} />
             ) : (
-              <img key="moon" className="icon-swap enter moon-filter" src="/assets/moon.svg" alt="moon" style={{ width: 18, height: 18 }} />
+              <img key="moon" className="icon-swap enter moon-filter" src={`${ASSET_BASE}/moon.svg`} alt="moon" style={{ width: 18, height: 18 }} />
             )}
           </button>
           <div style={{ position: 'relative' }}>
@@ -168,7 +165,7 @@ export function App() {
             className="icon-btn"
             style={{ width: 48, height: 48, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e5e7eb' }}
           >
-            <img src="/assets/bug.svg" alt="bug" style={{ width: 22, height: 22 }} />
+            <img src={`${ASSET_BASE}/bug.svg`} alt="bug" style={{ width: 22, height: 22 }} />
           </button>
         ) : (
           <div className="panel" style={{ width: 280, padding: 10, maxHeight: '60vh', overflowY: 'auto' }}>

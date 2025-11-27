@@ -5,7 +5,21 @@
 import type { MetricKey, MetricSample, MetricsSeries } from '../types/domain';
 import { argon2Verify } from 'hash-wasm';
 
-const BASE = (import.meta as any)?.env?.VITE_API_BASE || '/api';
+// Detect proxy base path once at startup
+function getProxyBase(): string {
+  const path = window.location.pathname;
+  // Match patterns like /studio/.../proxy/3000
+  const match = path.match(/^(.*\/proxy\/\d+)/);
+  if (match) return match[1];
+  return '';
+}
+const PROXY_BASE = getProxyBase();
+
+// API base: proxy path + /api
+const BASE = PROXY_BASE ? `${PROXY_BASE}/api` : '/api';
+
+// Asset base: proxy path + /assets (for images, svgs, etc.)
+export const ASSET_BASE = PROXY_BASE ? `${PROXY_BASE}/assets` : '/assets';
 
 // Global error reporter for debugger widget
 export function reportError(message: string) {
