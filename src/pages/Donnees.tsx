@@ -76,23 +76,19 @@ export default function Donnees() {
   const { barbotines } = useAppState();
   const navigate = useNavigate();
 
-  // Panel 1: Entrée manuelle (visuel uniquement)
-  const [manualBb, setManualBb] = useState<string>(() => (barbotines[0]?.id ?? ''));
-  const [manualMetric, setManualMetric] = useState<ChartMetricKey>('viscosite');
-  const [manualDateTime, setManualDateTime] = useState<string>(''); // gg/mm/aaaa , HH:MM:SS
-  const [manualValue, setManualValue] = useState<string>('');
-  const manualUnitOptions = unitsByMetric[manualMetric];
-  const [manualUnit, setManualUnit] = useState<string>(() => manualUnitOptions[0]);
-
-  // Keep unit in sync with metric
-  useMemo(() => {
-    if (!manualUnitOptions.includes(manualUnit)) setManualUnit(manualUnitOptions[0]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manualMetric]);
+  // Panel 1: Entrée manuelle - date range based tables
+  const [manualStart, setManualStart] = useState<string>('');
+  const [manualEnd, setManualEnd] = useState<string>('');
+  const [manualHistoryMap, setManualHistoryMap] = useState<HistoryMap>({});
+  const [manualDayList, setManualDayList] = useState<string[]>([]);
+  const [loadingManual, setLoadingManual] = useState<boolean>(false);
+  const [manualChangedCells, setManualChangedCells] = useState<Record<string, boolean>>({});
+  const markManualCellChanged = (key: string) => setManualChangedCells(prev => ({ ...prev, [key]: true }));
 
   // Panel 3: Export (visuel seulement)
   const [expStart, setExpStart] = useState<string>('');
   const [expEnd, setExpEnd] = useState<string>('');
+  const [expAllData, setExpAllData] = useState<boolean>(false);
   const defaultExportBb = useMemo(() => {
     const sorted = [...barbotines].sort((a,b) => a.name.localeCompare(b.name));
     const firstM7 = sorted.find(b => b.name.includes('M7-3')) || sorted[0];
@@ -283,9 +279,21 @@ export default function Donnees() {
           setHistStart(toLocalDateTimeInput(startTs));
           setHistEnd(toLocalDateTimeInput(endTs));
         }
-        const sortedDays = Array.from(daysSet).sort();
-        setHistoryMap(nextMap);
-        setDayList(sortedDays);
+          const sortedDays = (Number.isFinite(startTs) && Number.isFinite(endTs))
+  ? (() => {
+      const days: string[] = [];
+      const d = new Date(startTs); d.setHours(0, 0, 0, 0);
+      const end = new Date(endTs); end.setHours(0, 0, 0, 0);
+      for (let t = d.getTime(); t <= end.getTime(); t += 24 * 60 * 60 * 1000) {
+        const dk = dayKey(t);
+        days.push(dk);
+        if (!nextMap[dk]) nextMap[dk] = {}; // ensure table exists even with no values
+      }
+      return days;
+    })()
+  : Array.from(daysSet).sort();
+setHistoryMap(nextMap);
+setDayList(sortedDays);
       } finally {
         if (!cancelled) setLoadingHistory(false);
       }
@@ -294,39 +302,151 @@ export default function Donnees() {
     return () => { cancelled = true; };
   }, [histStart, histEnd, barbotines, histLoadAll]);
 
+  // Load manual entry data based on date range
+  useEffect(() => {
+    let cancelled = false;
+    const s = Date.parse(manualStart);
+    const e = Date.parse(manualEnd);
+    // Need at least one valid date
+    if (!Number.isFinite(s) && !Number.isFinite(e)) {
+      setManualHistoryMap({});
+      setManualDayList([]);
+      return;
+    }
+    async function loadManual() {
+      setLoadingManual(true);
+      try {
+        const map: HistoryMap = {};
+        for (const b of barbotines) {
+          const sid = (b as any).slurryId as string | undefined;
+          if (!sid) continue;
+          const { series } = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O','silice','grain'], false);
+          for (const [param, pts] of Object.entries(series) as [string, any[]][]) {
+            const mk = param as TableMetricKey;
+            for (const p of pts) {
+              const t = Number(p.t);
+              // Filter by date range (either start or end can be undefined)
+              if (Number.isFinite(s) && t < s) continue;
+              if (Number.isFinite(e) && t > e) continue;
+              const dk = dayKey(t);
+              if (!map[dk]) map[dk] = {};
+              if (!map[dk][b.name]) map[dk][b.name] = {};
+              map[dk][b.name][mk] = Number(p.v);
+            }
+          }
+        }
+        if (cancelled) return;
+        const days = Object.keys(map).sort((a,b) => a.localeCompare(b));
+        setManualHistoryMap(map);
+        setManualDayList(days);
+      } catch {}
+      if (!cancelled) setLoadingManual(false);
+    }
+    loadManual();
+    return () => { cancelled = true; };
+  }, [manualStart, manualEnd, barbotines]);
+
   return (
     <div>
       <h2>Données</h2>
 
-      {/* Panel 1: Entrée manuelle */}
+      {/* Panel 1: Entrée manuelle - date range tables */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>Entrée manuelle</h3>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <label>Barbotine</label>
-          <select value={manualBb} onChange={e => setManualBb(e.target.value)}>
-            {barbotines.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-
-          <label>Métrique</label>
-          <select value={manualMetric} onChange={e => setManualMetric(e.target.value as ChartMetricKey)}>
-            {(Object.keys(metricLabels) as ChartMetricKey[]).map(k => (
-              <option key={k} value={k}>{metricLabels[k]}</option>
-            ))}
-          </select>
-
-          <label>Date & heure</label>
-          <input type="datetime-local" value={manualDateTime} onChange={e => setManualDateTime(e.target.value)} />
-
-          <label>Valeur</label>
-          <input type="text" placeholder="123.456" value={manualValue} onChange={e => setManualValue(e.target.value)} />
-
-          <label>Unité</label>
-          <select value={manualUnit} onChange={e => setManualUnit(e.target.value)}>
-            {manualUnitOptions.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-
-          <button disabled title="Bientôt disponible">Enregistrer</button>
+        <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+          Sélectionnez une date de début et/ou de fin pour afficher les tables modifiables.
+        </p>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <label>Début</label>
+          <input type="datetime-local" value={manualStart} onChange={e => setManualStart(e.target.value)} />
+          <label>Fin</label>
+          <input type="datetime-local" value={manualEnd} onChange={e => setManualEnd(e.target.value)} />
         </div>
+
+        {loadingManual && <p className="muted" style={{ marginTop: 12 }}>Chargement…</p>}
+        
+        {!loadingManual && manualDayList.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            {manualDayList.map(dk => (
+              <div key={`manual-day-${dk}`} style={{ marginBottom: 16 }}>
+                <h4 style={{ margin: '8px 0' }}>{dayKeyToLabel(dk)}</h4>
+                <table className="table" style={{ width: '100%' }}>
+                  <thead>
+                    <tr style={{ background: '#f3f4f6' }}>
+                      <th style={{ width: 140 }}>Barbotine</th>
+                      {metricOrder.map(mk => <th key={`mh-${dk}-${mk}`}>{headerLabels[mk]}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...barbotines]
+                      .sort((a,b) => {
+                        const group = (name: string) => name.includes('M7-3') ? 0 : name.includes('2CN2') ? 1 : name.includes('R55') ? 2 : 3;
+                        const ga = group(a.name); const gb = group(b.name);
+                        if (ga !== gb) return ga - gb; return a.name.localeCompare(b.name);
+                      })
+                      .map(b => {
+                        const row = manualHistoryMap[dk]?.[b.name] || {};
+                        return (
+                          <tr key={`mr-${dk}-${b.id}`}>
+                            <td>{b.name}</td>
+                            {metricOrder.map(mk => {
+                              const v = row[mk];
+                              const display = (typeof v === 'number' && Number.isFinite(v)) ? Number(v.toFixed(3)) : '';
+                              const cellKey = `manual|${dk}|${b.id}|${mk}`;
+                              return (
+                                <td key={`mc-${dk}-${b.id}-${mk}`}>
+                                  <input
+                                    type="text"
+                                    defaultValue={display}
+                                    placeholder="—"
+                                    onBlur={(ev) => {
+                                      const newVal = ev.target.value.trim();
+                                      if (newVal === String(display)) return;
+                                      markManualCellChanged(cellKey);
+                                      // Generate SQL for manual entry
+                                      const slurryId = (b as any).slurryId || b.id;
+                                      const slurryType = b.name.split(' ')[0] || 'M7-3';
+                                      const [yy,mm,dd] = dk.split('-').map(Number);
+                                      const parisDate = new Date(Date.UTC(yy!, mm! - 1, dd!, 12, 0, 0));
+                                      const tsIso = parisDate.toISOString().replace(/\.\d{3}Z$/, '.000Z');
+                                      const idSuffix = `${String(yy).slice(2)}${String(mm).padStart(2,'0')}${String(dd).padStart(2,'0')}1300002`;
+                                      const paramCodeMap: Record<TableMetricKey, string> = { pc: 'p', viscosity: 'v', density: 'd', pH: 'a', H2O: 'h', temperature: 't', silice: 's', grain: 'g' };
+                                      const code = paramCodeMap[mk] || 'x';
+                                      const idRheology = `${slurryId}_${code}${idSuffix}`;
+                                      const hadValue = typeof v === 'number' && Number.isFinite(v);
+                                      if (newVal === '') {
+                                        if (hadValue) {
+                                          appendSql(`DELETE FROM rheology WHERE id_rheology = '${idRheology}';`);
+                                        }
+                                        return;
+                                      }
+                                      const numVal = Number(newVal.replace(',', '.'));
+                                      if (!Number.isFinite(numVal)) return;
+                                      const unit = mk === 'pc' ? 'g' : mk === 'density' ? 'g/cm³' : mk === 'viscosity' ? 'mPa·s' : mk === 'temperature' ? '°C' : mk === 'H2O' ? 'L/h' : mk === 'silice' || mk === 'grain' ? '%' : '(-)';
+                                      if (!hadValue) {
+                                        appendSql(`INSERT INTO rheology (id_rheology, id_slurry, slurry_type, timestamp, source, parameter, value, unit, usl, lsl) VALUES ('${idRheology}', '${slurryId}', '${slurryType}', '${tsIso}', 'manual', '${mk}', ${numVal.toFixed(3)}, '${unit}', NULL, NULL);`);
+                                      } else {
+                                        appendSql(`UPDATE rheology SET value = ${numVal.toFixed(3)} WHERE id_rheology = '${idRheology}';`);
+                                      }
+                                    }}
+                                    style={{ width: '100%', minWidth: 60, ...(manualChangedCells[cellKey] ? { border: '2px solid #ef4444' } : {}) }}
+                                  />
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        )}
+        
+        {!loadingManual && manualDayList.length === 0 && (manualStart || manualEnd) && (
+          <p className="muted" style={{ marginTop: 12 }}>Aucune donnée trouvée pour cette période.</p>
+        )}
       </div>
 
       {/* Panel 2: Import CSV */}
@@ -423,16 +543,18 @@ export default function Donnees() {
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Période</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <label>Début</label>
-              <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={expStart} onChange={e => setExpStart(e.target.value)} />
+              <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={expStart} onChange={e => { setExpStart(e.target.value); setExpAllData(false); }} />
               <label>Fin</label>
-              <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={expEnd} onChange={e => setExpEnd(e.target.value)} />
+              <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={expEnd} onChange={e => { setExpEnd(e.target.value); setExpAllData(false); }} />
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
                 <input
                   type="checkbox"
-                  checked={!expStart && !expEnd}
+                  checked={expAllData}
                   onChange={(e) => {
+                    setExpAllData(e.target.checked);
                     if (e.target.checked) {
-                      // Clear dates to export all data
+                      // TODO: Fetch min/max dates from DB for selected barbotine and fill in
+                      // For now, clear dates to signal "all data"
                       setExpStart('');
                       setExpEnd('');
                     }
@@ -480,6 +602,36 @@ export default function Donnees() {
           <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={histStart} onChange={e => { setHistStart(e.target.value); setHistLoadAll(false); }} />
           <label>Fin</label>
           <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={histEnd} onChange={e => { setHistEnd(e.target.value); setHistLoadAll(false); }} />
+          <button
+            onClick={async () => {
+              // Fetch min/max timestamps from all barbotines and fill dates
+              setLoadingHistory(true);
+              try {
+                let minTs = Infinity;
+                let maxTs = -Infinity;
+                for (const b of barbotines) {
+                  const sid = (b as any).slurryId as string | undefined;
+                  if (!sid) continue;
+                  const { series } = await fetchRheologyAll(sid, ['density'], false);
+                  const pts = series['density'] || [];
+                  for (const p of pts) {
+                    const t = Number(p.t);
+                    if (t < minTs) minTs = t;
+                    if (t > maxTs) maxTs = t;
+                  }
+                }
+                if (Number.isFinite(minTs) && Number.isFinite(maxTs)) {
+                  setHistStart(toLocalDateTimeInput(minTs));
+                  setHistEnd(toLocalDateTimeInput(maxTs));
+                  setHistLoadAll(true);
+                }
+              } catch {}
+              setLoadingHistory(false);
+            }}
+            style={{ marginLeft: 8 }}
+          >
+            Tout
+          </button>
         </div>
 
         <div style={{ marginTop: 10 }}>
@@ -511,7 +663,7 @@ export default function Donnees() {
                             const editable = true; // testing-only: make cells editable
                             const cellKey = `${dk}|${b.id}|${mk}`;
                             return (
-                              <td key={`c-${dk}-${b.id}-${mk}`} style={changedCells[cellKey] ? { border: '2px solid #ef4444' } : undefined}>
+                              <td key={`c-${dk}-${b.id}-${mk}`}>
                                 {editable ? (
                                   <input
                                     type="text"
@@ -525,9 +677,10 @@ export default function Donnees() {
                                       const slurryType = b.name.split(' ')[0] || 'M7-3';
                                       // Approximate precise timestamp from date key (local noon for unambiguous tz)
                                       const [yy,mm,dd] = dk.split('-').map(Number);
-                                      // Build Paris local timestamp string at 13:00 with proper offset suffix
-                                      const off = parisOffsetSuffix(yy!, mm!, dd!);
-                                      const tsIso = `${String(yy)}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}T13:00:00${off}`;
+                                      // Build datetimeoffset format: 2024-08-19T12:00:00.000Z (UTC)
+                                      // Convert Paris local 13:00 to UTC
+                                      const parisDate = new Date(Date.UTC(yy!, mm! - 1, dd!, 12, 0, 0));
+                                      const tsIso = parisDate.toISOString().replace(/\.\d{3}Z$/, '.000Z');
                                       const idSuffix = `${String(yy).slice(2)}${String(mm).padStart(2,'0')}${String(dd).padStart(2,'0')}1300002`;
                                       const paramCodeMap: Record<TableMetricKey, string> = { pc: 'p', viscosity: 'v', density: 'd', pH: 'a', H2O: 'h', temperature: 't', silice: 's', grain: 'g' };
                                       const code = paramCodeMap[mk] || 'x';
@@ -557,7 +710,7 @@ export default function Donnees() {
                                         markCellChanged(cellKey);
                                       }
                                     }}
-                                    style={{ width: '100%', minWidth: 60 }}
+                                    style={{ width: '100%', minWidth: 60, ...(changedCells[cellKey] ? { border: '2px solid #ef4444' } : {}) }}
                                   />
                                 ) : (
                                   display as any
@@ -569,7 +722,7 @@ export default function Donnees() {
                       );
                     })}
                 </Fragment>
-              ))}
+                ))}
               </tbody>
             </table>
           </div>

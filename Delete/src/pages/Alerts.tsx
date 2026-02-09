@@ -1,6 +1,6 @@
 // Placeholder: this file will be replaced by Donnees.tsx soon per plan
 import { useMemo, useState } from 'react';
-import { useAppState } from '../../store/appState';
+import { useAppState } from '../store/appState';
 import { Scatter, ScatterChart, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 type CsvPoint = { time: number; value: number };
@@ -111,6 +111,5 @@ export default function Alerts() {
     </div>
   );
 }
-
 
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Home from '../pages/Home';
 import Detail from '../pages/Detail';
 import Donnees from '../pages/Donnees';
+import Moulage from '../pages/Moulage';
 import Params from '../pages/Params';
 import Profile from '../pages/Profile';
 import Support from '../pages/Support';
@@ -24,6 +25,18 @@ export function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
+    // Apply accent color from localStorage on load
+    const accentColor = localStorage.getItem('accent-color') || '#0e224b';
+    const ACCENT_COLORS = [
+      { light: '#0e224b', dark: '#9db0df' },
+      { light: '#0ea5e9', dark: '#7dd3fc' },
+      { light: '#16a34a', dark: '#86efac' },
+      { light: '#7c3aed', dark: '#c4b5fd' },
+      { light: '#ea580c', dark: '#fdba74' },
+    ];
+    const pair = ACCENT_COLORS.find(c => c.light === accentColor) || ACCENT_COLORS[0];
+    document.documentElement.style.setProperty('--accent', pair.light);
+    document.documentElement.style.setProperty('--accent-dark', pair.dark);
     const close = () => setUserMenu(false);
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
@@ -43,15 +56,11 @@ export function App() {
 
   const { ready, isAuthenticated, user, login, logout } = useAuth();
   const { initialDataLoading } = useAppState();
-  const [dataGateTimedOut, setDataGateTimedOut] = useState(false);
+  const [loadingDone, setLoadingDone] = useState(false);
+  // Reset loading gate when auth state changes
   useEffect(() => {
-    if (isAuthenticated && initialDataLoading) {
-      setDataGateTimedOut(false);
-      const id = window.setTimeout(() => setDataGateTimedOut(true), 5000);
-      return () => clearTimeout(id);
-    }
-    setDataGateTimedOut(false);
-  }, [isAuthenticated, initialDataLoading]);
+    if (!isAuthenticated) setLoadingDone(false);
+  }, [isAuthenticated]);
   // Load theme from backend prefs when authenticated
   useEffect(() => {
     (async () => {
@@ -75,10 +84,13 @@ export function App() {
     })();
   }, [theme, isAuthenticated, user?.username]);
 
-  // Show loading page: 3s minimum, 7s if server unreachable
-  // The Loading component handles its own timing and navigation
-  if (!ready || (isAuthenticated && initialDataLoading && !dataGateTimedOut)) {
+  // Show loading page: 3s minimum, 7s (3+4) if server unreachable
+  // Once loading completes, set loadingDone to true
+  if (!ready) {
     return <Loading minMs={3000} serverTimeoutMs={7000} />;
+  }
+  if (isAuthenticated && !loadingDone) {
+    return <Loading minMs={3000} serverTimeoutMs={7000} onReady={() => setLoadingDone(true)} />;
   }
 
   if (!isAuthenticated) {
@@ -104,6 +116,7 @@ export function App() {
         </div>
         <div className="links" style={{ alignItems: 'center' }}>
           <NavLink to="/" className={({ isActive }) => isActive ? 'active' : ''}>Accueil</NavLink>
+          <NavLink to="/moulage" className={({ isActive }) => isActive ? 'active' : ''}>Moulage</NavLink>
           <NavLink to="/donnees" className={({ isActive }) => isActive ? 'active' : ''}>Données</NavLink>
           <button aria-label="Basculer thème" className="icon-btn" title={theme === 'light' ? 'Thème sombre' : 'Thème clair'} onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>
             {theme === 'light' ? (
@@ -117,9 +130,12 @@ export function App() {
               {(() => {
                 const email = user?.email || '';
                 const base = (email.split('@')[0] || '').replace(/[_-]/g, ' ').replace(/\./g, ' ').trim() || 'Utilisateur';
-                const parts = base.split(/\s+/);
-                const display = parts.length >= 2 ? `${parts[0]} ${parts[1]}` : base;
-                const initial = display.charAt(0).toUpperCase();
+                const parts = base.split(/\s+/).filter(Boolean);
+                const display = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : base;
+                // Two-letter initials: first letter of first name + first letter of last name
+                const initials = parts.length >= 2
+                  ? (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
+                  : base.charAt(0).toUpperCase();
                 // TEMP: hardcode 'Editor' for youssef.karim — replace with server RBAC mapping
                 const roleLabel = (email.toLowerCase() === 'youssef.karim@safrangroup.com') ? 'Editor' : (user?.level === 3 ? 'Editor' : user?.level === 2 ? 'Read & Export' : 'Read-only');
                 return (
@@ -128,7 +144,7 @@ export function App() {
                       <span className="user-name">{display}</span>
                       <span className="user-role">{roleLabel}</span>
               </div>
-                    <div className="avatar-initial" aria-hidden="true">{initial || 'U'}</div>
+                    <div className="avatar-initial" aria-hidden="true">{initials || 'U'}</div>
                   </>
                 );
               })()}
@@ -147,6 +163,7 @@ export function App() {
       <main className="content">
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/moulage" element={<Moulage />} />
           <Route path="/barbotine/:id" element={<Detail />} />
           <Route path="/donnees" element={<Donnees />} />
           <Route path="/loading" element={<Loading />} />
@@ -156,19 +173,20 @@ export function App() {
           <Route path="/reset" element={<Reset />} />
         </Routes>
       </main>
-      {/* Global debugger widget */}
+      {/* Global debugger widget - closes on outside click */}
+      {dbgOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 59 }} onClick={() => setDbgOpen(false)} />}
       <div style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 60 }}>
         {!dbgOpen ? (
           <button
             onClick={() => setDbgOpen(true)}
             title="Debugger"
             className="icon-btn"
-            style={{ width: 48, height: 48, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e5e7eb' }}
+            style={{ width: 48, height: 48, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e5e7eb', background: 'var(--panel)' }}
           >
-            <img src={`${ASSET_BASE}/bug.svg`} alt="bug" style={{ width: 22, height: 22 }} />
+            <img src={`${ASSET_BASE}/bug.svg`} alt="bug" style={{ width: 22, height: 22, opacity: 0.6 }} />
           </button>
         ) : (
-          <div className="panel" style={{ width: 280, padding: 10, maxHeight: '60vh', overflowY: 'auto' }}>
+          <div className="panel" style={{ width: 280, padding: 10, maxHeight: '60vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <strong>Debugger</strong>
               <button className="icon-btn" onClick={() => setDbgOpen(false)} aria-label="Toggle debugger">–</button>

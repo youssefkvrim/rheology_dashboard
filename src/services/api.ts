@@ -3,7 +3,34 @@
 // Replace with real fetch calls when the backend is available.
 
 import type { MetricKey, MetricSample, MetricsSeries } from '../types/domain';
-import { argon2Verify } from 'hash-wasm';
+import { argon2Verify, argon2id } from 'hash-wasm';
+
+// -------------------- Password Hashing (Argon2id) --------------------
+// Use this to hash passwords before storing in the UTILISATEUR table
+export async function hashPassword(password: string): Promise<string> {
+  // Generate random salt (16 bytes)
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  // Argon2id with recommended parameters
+  const hash = await argon2id({
+    password,
+    salt,
+    parallelism: 1,
+    iterations: 3,
+    memorySize: 65536, // 64 MB
+    hashLength: 32,
+    outputType: 'encoded', // Returns $argon2id$... format
+  });
+  return hash;
+}
+
+export async function verifyPassword(hash: string, password: string): Promise<boolean> {
+  try {
+    return await argon2Verify({ password, hash });
+  } catch {
+    return false;
+  }
+}
 
 // Detect proxy base path once at startup
 function getProxyBase(): string {
@@ -168,11 +195,12 @@ export async function putUserPrefs(userId: string, prefs: any): Promise<boolean>
 export type AuthUser = { userId: string; email: string; role: 'admin' | 'user'; passwordHash: string };
 
 // Temporary in-memory source for testing before SQL integration
+// Password 'pfx' hashed with argon2id: $argon2id$v=19$m=16,t=2,p=1$MEJOeGIwMXV1RlN4SU80dw$IzPrYxc+Nexy9Y4fg9076g
 const TEMP_USER: AuthUser = {
   userId: 'youssef.karim',
   email: 'youssef.karim@safrangroup.com',
   role: 'admin',
-  passwordHash: '$argon2id$v=19$m=16,t=2,p=1$eGRORHRoajk3TnhGZ3lnRg$eDzjxcx0pYNtij29XUankg',
+  passwordHash: '$argon2id$v=19$m=16,t=2,p=1$MEJOeGIwMXV1RlN4SU80dw$IzPrYxc+Nexy9Y4fg9076g',
 };
 
 export async function findUser(identifier: string): Promise<AuthUser | null> {
@@ -182,21 +210,12 @@ export async function findUser(identifier: string): Promise<AuthUser | null> {
   return null;
 }
 
-export async function verifyPassword(hash: string, password: string): Promise<boolean> {
-  try {
-    // hash-wasm validates argon2id hash string (PHC format). Salt and params are embedded.
-    return await argon2Verify({ password, hash });
-  } catch {
-    return false;
-  }
-}
-
 export async function authenticateUser(identifier: string, password: string): Promise<{ ok: boolean; user?: Pick<AuthUser, 'userId'|'email'|'role'> }>
 {
   const user = await findUser(identifier);
   if (!user) return { ok: false };
-  // Dev fallback: accept 'pfx' for the temp user
-  const ok = password === 'pfx' || await verifyPassword(user.passwordHash, password);
+  // Verify password using argon2id
+  const ok = await verifyPassword(user.passwordHash, password);
   if (!ok) return { ok: false };
   return { ok: true, user: { userId: user.userId, email: user.email, role: user.role } };
 }

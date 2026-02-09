@@ -8,6 +8,25 @@ import { MetricPanel } from '../components/MetricPanel';
 import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
 import { fetchRheologyAll, ASSET_BASE } from '../services/api';
 
+// Extended range type with all periods
+type RangeKey = '3h' | '1d' | '7d' | '1m' | '3m' | '6m' | '1y' | '3y' | 'all' | 'specific';
+const ALL_RANGES: RangeKey[] = ['3h', '1d', '7d', '1m', '3m', '6m', '1y', '3y', 'all'];
+const RANGE_LABELS: Record<RangeKey, string> = {
+  '3h': '3H', '1d': '1D', '7d': '7D', '1m': '1M', '3m': '3M', '6m': '6M', '1y': '1Y', '3y': '3Y', 'all': 'ALL', 'specific': 'Custom'
+};
+const RANGE_MS: Record<RangeKey, number> = {
+  '3h': 3 * 3600e3,
+  '1d': 24 * 3600e3,
+  '7d': 7 * 24 * 3600e3,
+  '1m': 30 * 24 * 3600e3,
+  '3m': 90 * 24 * 3600e3,
+  '6m': 180 * 24 * 3600e3,
+  '1y': 365 * 24 * 3600e3,
+  '3y': 3 * 365 * 24 * 3600e3,
+  'all': Infinity,
+  'specific': 0,
+};
+
 // TEST ONLY: Hardcoded ML output path used across all barbotines for preview.
 // Replace with real data binding and remove hardcoding.
 const ML_BASE = `${ASSET_BASE}/Plaque%20ML/output/2CN2_007_2_03-11-2025T100656+1`;
@@ -139,10 +158,10 @@ export default function Detail() {
   const [overrideText, setOverrideText] = useState('');
   const [overrideJustif, setOverrideJustif] = useState('');
   const [manual, setManual] = useState<{ densite?: string; viscosite?: string; ph?: string; temperature?: string }>({});
-  const [densRange, setDensRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:densite`) as any) || 'all');
-  const [viscRange, setViscRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:viscosite`) as any) || 'all');
-  const [tempRange, setTempRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:temperature`) as any) || 'all');
-  const [phRange, setPhRange] = useState<'all' | '3h' | '1d' | '7d' | '1m' | '3m' | 'specific'>(()=> (localStorage.getItem(`range:${id}:ph`) as any) || 'all');
+  const [densRange, setDensRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:densite`) as RangeKey) || 'all');
+  const [viscRange, setViscRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:viscosite`) as RangeKey) || 'all');
+  const [tempRange, setTempRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:temperature`) as RangeKey) || 'all');
+  const [phRange, setPhRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:ph`) as RangeKey) || 'all');
   // anchors for horizontal pan per chart
   const [densAnchor, setDensAnchor] = useState<number | undefined>(undefined);
   const [viscAnchor, setViscAnchor] = useState<number | undefined>(undefined);
@@ -155,7 +174,7 @@ export default function Detail() {
   const [phY, setPhY] = useState<[number, number]>([6.5, 9.8]);
   // drag state
   const dragRef = useRef<{ startX: number; startY: number; startAnchor: number; startYMin: number; startYMax: number; mode: 'x' | 'y' | null } | null>(null);
-  const [pcRange, setPcRange] = useState<'7d' | '1m' | '3m' | 'all' | 'specific'>(()=> (localStorage.getItem(`range:${id}:pc`) as any) || 'all');
+  const [pcRange, setPcRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:pc`) as RangeKey) || 'all');
   const [pcBounds, setPcBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.pc?.low ?? null, high: bounds.pc?.high ?? null }));
   const [imageModal, setImageModal] = useState<'photo' | 'ai' | null>(null);
   const [imgScale, setImgScale] = useState<number>(1);
@@ -172,7 +191,7 @@ export default function Detail() {
   const [h2oAvgOn, setH2oAvgOn] = useState<boolean>(true);
   const [h2oCritOn, setH2oCritOn] = useState<boolean>(true);
   const [h2oCritPct, setH2oCritPct] = useState<number>(30);
-  const [h2oRange, setH2oRange] = useState<'3h'|'1d'|'7d'|'1m'|'3m'|'all'|'specific'>(()=> (localStorage.getItem(`range:${id}:h2o`) as any) || 'all');
+  const [h2oRange, setH2oRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:h2o`) as RangeKey) || 'all');
   const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.h2o.low, high: bounds.h2o.high }));
   // Doseuse (visuel uniquement)
   const [pumpConnected, setPumpConnected] = useState<boolean>(false);
@@ -191,8 +210,8 @@ export default function Detail() {
   const [pcCritPct, setPcCritPct] = useState<number>(30);
 
   // Extra panels: Silice and Grains
-  const [siliceRange, setSiliceRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>(()=> (localStorage.getItem(`range:${id}:silice`) as any) || '3m');
-  const [grainsRange, setGrainsRange] = useState<'all'|'3h'|'1d'|'7d'|'1m'|'3m'|'specific'>(()=> (localStorage.getItem(`range:${id}:grains`) as any) || '3m');
+  const [siliceRange, setSiliceRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:silice`) as RangeKey) || '3m');
+  const [grainsRange, setGrainsRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:grains`) as RangeKey) || '3m');
   const [siliceBounds, setSiliceBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.silice.low, high: bounds.silice.high }));
   const [grainsBounds, setGrainsBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.grains.low, high: bounds.grains.high }));
   const [siliceAvgOn, setSiliceAvgOn] = useState<boolean>(true);
@@ -332,7 +351,7 @@ export default function Detail() {
     if (pcRange === 'specific') {
       return (source as any[]).filter((p:any) => p.t >= specStart && p.t <= specEnd);
     }
-    const ms = pcRange === '7d' ? 7*24*60*60*1000 : pcRange === '1m' ? 30*24*60*60*1000 : pcRange === '3m' ? 90*24*60*60*1000 : 365*24*60*60*1000;
+    const ms = RANGE_MS[pcRange] || 365*24*60*60*1000;
     const start = now - ms;
     return (source as any[]).filter((p:any) => p.t >= start);
   }, [pcDb, pcRange, specStart, specEnd]);
@@ -496,8 +515,8 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Densité (g/cm³)</h3>
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                  <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => { setDensRange(r); localStorage.setItem(`range:${id}:densite`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                  <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => { setDensRange(r); localStorage.setItem(`range:${id}:densite`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
                 <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('densite')}>…</button>
               </div>
@@ -549,7 +568,7 @@ export default function Detail() {
                   dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 }
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = densRange==='3h'?3*3600e3:densRange==='1d'?24*3600e3:densRange==='7d'?7*24*3600e3:densRange==='1m'?30*24*3600e3:densRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[densRange] || 3600e3;
                   const scale = windowMs / (e.currentTarget.clientWidth || 1);
                   setDensAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -561,6 +580,15 @@ export default function Detail() {
               }}
               onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
               onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onWheel={(e) => {
+                // Scroll wheel zoom: up = zoom in (reduce range), down = zoom out (increase range)
+                const factor = e.deltaY > 0 ? 1.15 : 0.87; // 15% zoom per scroll
+                const [min0, max0] = densY;
+                const mid = (min0 + max0) / 2;
+                const halfRange = ((max0 - min0) / 2) * factor;
+                setDensY([Number((mid - halfRange).toFixed(3)), Number((mid + halfRange).toFixed(3))]);
+                e.preventDefault();
+              }}
               onTouchStart={(e) => {
                 const t = e.touches[0];
                 const lastT = densiteData[densiteData.length-1]?.time ?? Date.now();
@@ -574,7 +602,7 @@ export default function Detail() {
                 const dy = t.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = densRange==='3h'?3*3600e3:densRange==='1d'?24*3600e3:densRange==='7d'?7*24*3600e3:densRange==='1m'?30*24*3600e3:densRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[densRange] || 3600e3;
                   const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
                   setDensAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -610,8 +638,8 @@ export default function Detail() {
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Viscosité (mPa·s)</h3>
             <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => { setViscRange(r); localStorage.setItem(`range:${id}:viscosite`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => { setViscRange(r); localStorage.setItem(`range:${id}:viscosite`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('visco')}>…</button>
             </div>
@@ -660,7 +688,7 @@ export default function Detail() {
                 const dy = e.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = viscRange==='3h'?3*3600e3:viscRange==='1d'?24*3600e3:viscRange==='7d'?7*24*3600e3:viscRange==='1m'?30*24*3600e3:viscRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[viscRange] || 3600e3;
                   const scale = windowMs / (e.currentTarget.clientWidth || 1);
                   setViscAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -672,6 +700,14 @@ export default function Detail() {
               }}
               onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
               onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onWheel={(e) => {
+                const factor = e.deltaY > 0 ? 1.15 : 0.87;
+                const [min0, max0] = viscY;
+                const mid = (min0 + max0) / 2;
+                const halfRange = ((max0 - min0) / 2) * factor;
+                setViscY([Math.round(mid - halfRange), Math.round(mid + halfRange)]);
+                e.preventDefault();
+              }}
               onTouchStart={(e) => {
                 const t = e.touches[0];
                 const lastT = viscositeData[viscositeData.length-1]?.time ?? Date.now();
@@ -685,7 +721,7 @@ export default function Detail() {
                 const dy = t.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = viscRange==='3h'?3*3600e3:viscRange==='1d'?24*3600e3:viscRange==='7d'?7*24*3600e3:viscRange==='1m'?30*24*3600e3:viscRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[viscRange] || 3600e3;
                   const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
                   setViscAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -719,8 +755,8 @@ export default function Detail() {
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Pouvoir couvrant - Historique (g)</h3>
             <div className="segmented">
-              {(['7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => { setPcRange(r); localStorage.setItem(`range:${id}:pc`, r); }}>{r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => { setPcRange(r); localStorage.setItem(`range:${id}:pc`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('pc-hist')}>…</button>
             </div>
@@ -920,8 +956,8 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>Température (°C)</h3>
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                  <button key={r} className={`seg-btn ${tempRange===r?'active':''}`} onClick={() => { setTempRange(r); localStorage.setItem(`range:${id}:temperature`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                  <button key={r} className={`seg-btn ${tempRange===r?'active':''}`} onClick={() => { setTempRange(r); localStorage.setItem(`range:${id}:temperature`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
                 <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('temp')}>…</button>
               </div>
@@ -971,7 +1007,7 @@ export default function Detail() {
                 const dy = e.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = tempRange==='3h'?3*3600e3:tempRange==='1d'?24*3600e3:tempRange==='7d'?7*24*3600e3:tempRange==='1m'?30*24*3600e3:tempRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[tempRange] || 3600e3;
                   const scale = windowMs / (e.currentTarget.clientWidth || 1);
                   setTempAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -983,6 +1019,14 @@ export default function Detail() {
               }}
               onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
               onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onWheel={(e) => {
+                const factor = e.deltaY > 0 ? 1.15 : 0.87;
+                const [min0, max0] = tempY;
+                const mid = (min0 + max0) / 2;
+                const halfRange = ((max0 - min0) / 2) * factor;
+                setTempY([Number((mid - halfRange).toFixed(2)), Number((mid + halfRange).toFixed(2))]);
+                e.preventDefault();
+              }}
               onTouchStart={(e) => {
                 const t = e.touches[0];
                 const lastT = tempData[tempData.length-1]?.time ?? Date.now();
@@ -996,7 +1040,7 @@ export default function Detail() {
                 const dy = t.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = tempRange==='3h'?3*3600e3:tempRange==='1d'?24*3600e3:tempRange==='7d'?7*24*3600e3:tempRange==='1m'?30*24*3600e3:tempRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[tempRange] || 3600e3;
                   const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
                   setTempAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -1030,8 +1074,8 @@ export default function Detail() {
             <h3 style={{ margin: 0 }}>pH</h3>
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
               <div className="segmented">
-                {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                  <button key={r} className={`seg-btn ${phRange===r?'active':''}`} onClick={() => { setPhRange(r); localStorage.setItem(`range:${id}:ph`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+                {ALL_RANGES.map(r => (
+                  <button key={r} className={`seg-btn ${phRange===r?'active':''}`} onClick={() => { setPhRange(r); localStorage.setItem(`range:${id}:ph`, r); }}>{RANGE_LABELS[r]}</button>
                 ))}
                 <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('ph')}>…</button>
               </div>
@@ -1081,7 +1125,7 @@ export default function Detail() {
                 const dy = e.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = phRange==='3h'?3*3600e3:phRange==='1d'?24*3600e3:phRange==='7d'?7*24*3600e3:phRange==='1m'?30*24*3600e3:phRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[phRange] || 3600e3;
                   const scale = windowMs / (e.currentTarget.clientWidth || 1);
                   setPhAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -1093,6 +1137,14 @@ export default function Detail() {
               }}
               onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
               onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
+              onWheel={(e) => {
+                const factor = e.deltaY > 0 ? 1.15 : 0.87;
+                const [min0, max0] = phY;
+                const mid = (min0 + max0) / 2;
+                const halfRange = ((max0 - min0) / 2) * factor;
+                setPhY([Number((mid - halfRange).toFixed(2)), Number((mid + halfRange).toFixed(2))]);
+                e.preventDefault();
+              }}
               onTouchStart={(e) => {
                 const t = e.touches[0];
                 const lastT = phData[phData.length-1]?.time ?? Date.now();
@@ -1106,7 +1158,7 @@ export default function Detail() {
                 const dy = t.clientY - dragRef.current.startY;
                 if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
                 if (dragRef.current.mode === 'x') {
-                  const windowMs = phRange==='3h'?3*3600e3:phRange==='1d'?24*3600e3:phRange==='7d'?7*24*3600e3:phRange==='1m'?30*24*3600e3:phRange==='3m'?90*24*3600e3:3600e3;
+                  const windowMs = RANGE_MS[phRange] || 3600e3;
                   const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
                   setPhAnchor(dragRef.current.startAnchor + dx * scale);
                 } else {
@@ -1142,8 +1194,8 @@ export default function Detail() {
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3>Débit H₂O — Historique (L/h)</h3>
             <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => { setH2oRange(r); localStorage.setItem(`range:${id}:h2o`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => { setH2oRange(r); localStorage.setItem(`range:${id}:h2o`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('h2o')}>…</button>
             </div>
@@ -1200,8 +1252,8 @@ export default function Detail() {
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Silice (%)</h3>
             <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${siliceRange===r?'active':''}`} onClick={() => { setSiliceRange(r); localStorage.setItem(`range:${id}:silice`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                <button key={r} className={`seg-btn ${siliceRange===r?'active':''}`} onClick={() => { setSiliceRange(r); localStorage.setItem(`range:${id}:silice`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('silice')}>…</button>
             </div>
@@ -1256,8 +1308,8 @@ export default function Detail() {
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Grains (%)</h3>
             <div className="segmented">
-              {(['3h','1d','7d','1m','3m','all'] as const).map(r => (
-                <button key={r} className={`seg-btn ${grainsRange===r?'active':''}`} onClick={() => { setGrainsRange(r); localStorage.setItem(`range:${id}:grains`, r); }}>{r==='3h'?'3H':r==='1d'?'1D':r==='7d'?'7D':r==='1m'?'1M':r==='3m'?'3M':'ALL'}</button>
+              {ALL_RANGES.map(r => (
+                <button key={r} className={`seg-btn ${grainsRange===r?'active':''}`} onClick={() => { setGrainsRange(r); localStorage.setItem(`range:${id}:grains`, r); }}>{RANGE_LABELS[r]}</button>
               ))}
               <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('grains')}>…</button>
             </div>

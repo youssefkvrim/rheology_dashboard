@@ -1,6 +1,6 @@
 # Safran Slurries Dashboard
 
-Vite + React + TypeScript dashboard for barbotine monitoring against a SQL Server backend exposed under `/api`. The app now targets real data only; simulated/demo data paths are removed.
+Vite + React + TypeScript dashboard for barbotine monitoring against a SQL Server backend exposed under `/api`. The app targets real data only.
 
 ![Dashboard Demo](assets/demo-dashboard.gif)
 

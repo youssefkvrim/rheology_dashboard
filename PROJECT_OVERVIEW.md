@@ -57,9 +57,11 @@ Defined in `app/App.tsx`:
   - `/` → `Home`
   - `/barbotine/:id` → `Detail`
   - `/donnees` → `Donnees`
-- `/loading` → `Loading` (full-page ASCII loader test)
-  - `/params` → `Params`
-- `/reset` → `Reset`
+  - `/loading` → `Loading` (full-page ASCII loader test)
+  - `/params` → `Params` (notifications, colors, language, chart defaults)
+  - `/profile` → `Profile` (avatar, personal info, access requests)
+  - `/support` → `Support` (contact form, FAQ)
+  - `/reset` → `Reset`
 
 ## 5. State Management (`src/store/appState.tsx`)
 - Context: `AppStateProvider` → `useAppState()`.
@@ -100,12 +102,29 @@ Defined in `app/App.tsx`:
 - CSV Import/Export wired to backend. Import requires schema:
   `id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl`.
   Conflicts on existing `id_rheology` return 409 unless override is requested.
-- Testing-only loading overlay uses ASCII served from `public/loading_page/ascii.txt` (fetched first), with fallback to bundled `loading_page/ascii.txt?raw`.
+- "Tout" checkbox in export panel is now properly toggleable.
+
+### Profile (`src/pages/Profile.tsx`)
+- Avatar upload (local preview; backend persistence pending UTILISATEUR table).
+- Editable: name, email, phone.
+- Access rights request (stub).
+
+### Params (`src/pages/Params.tsx`)
+- Notification channel selection (email/sms/push/none).
+- Accent color picker (persisted to CSS variable).
+- Language selector (stub for multilang).
+- Refresh interval configuration.
+- Default chart settings (avg, trend, deltaY).
+
+### Support (`src/pages/Support.tsx`)
+- Contact form with category, subject, message.
+- Opens mailto as fallback; SMTP integration pending.
 
 ## 8. Charts conventions
 - Recharts; primary series first, average second; dashed red line for averages.
 - X axis is time; tooltips show local date/time; trend is visual only.
 - Critical zones (%) shade near bounds; single-bound cases supported.
+- Single-point average: rendered as horizontal ReferenceLine (Line requires 2+ points).
 
 ## 9. Styling (`src/app.css`)
 - CSS variables for theme palette.
@@ -122,6 +141,8 @@ Defined in `app/App.tsx`:
 - All pages should prefer the repository seam for consistency.
 
 ## 11. Backend API (Node + SQL Server)
+- Database: `PFX_MOULAGE_prod` (was `PFX_suivi_barbotine`).
+- Password hashing: Argon2id via `hash-wasm` (`hashPassword`, `verifyPassword` in api.ts).
 - `server/index.cjs` exposes:
   - `GET /api/health`
   - `GET /api/slurries` — distinct `id_slurry`

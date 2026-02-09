@@ -34,12 +34,13 @@ function useAsciiSource(): string {
 }
 
 export type LoadingProps = {
-  minMs?: number;         // minimum display time (default 3000)
-  serverTimeoutMs?: number; // extra time if server unreachable (default 7000 total)
-  onReady?: () => void;   // callback when ready to proceed
+  minMs?: number;           // minimum display time (default 3000)
+  serverTimeoutMs?: number; // total time if server unreachable (default 7000 = 3000 + 4000)
+  onReady?: () => void;     // callback when ready to proceed
+  autoNavigate?: boolean;   // if true, navigate to '/' when done (default false when used as gate)
 };
 
-export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady }: LoadingProps) {
+export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady, autoNavigate = false }: LoadingProps) {
   const navigate = useNavigate();
   const ascii = useAsciiSource();
   const baseLines = useMemo(() => ascii.split('\n'), [ascii]);
@@ -65,23 +66,24 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady 
     return () => { cancelled = true; };
   }, []);
 
-  // Determine when to finish
+  // Determine when to finish: 3s if server OK, 7s (3+4) if not
   useEffect(() => {
     if (done) return;
     const elapsed = () => Date.now() - startRef.current;
     const check = () => {
-      if (serverOk === null) return; // still checking
+      if (serverOk === null) return; // still checking server
+      // Always wait minMs (3s), then if server not OK wait additional time up to serverTimeoutMs
       const required = serverOk ? minMs : serverTimeoutMs;
       if (elapsed() >= required) {
         setDone(true);
         if (onReady) onReady();
-        else navigate('/');
+        else if (autoNavigate) navigate('/');
       }
     };
     check();
     const id = setInterval(check, 200);
     return () => clearInterval(id);
-  }, [serverOk, minMs, serverTimeoutMs, done, onReady, navigate]);
+  }, [serverOk, minMs, serverTimeoutMs, done, onReady, navigate, autoNavigate]);
 
   // Character groups to cycle through, preserving overall shape
   const nextChar = (ch: string, step: number): string => {

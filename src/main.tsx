@@ -5,6 +5,7 @@ import { App } from './app/App';
 import { AppStateProvider } from './store/appState';
 import { ChartParamsProvider } from './store/chartParams';
 import { AuthProvider } from './features/auth/AuthContext';
+import { I18nProvider } from './i18n';
 import './index.css';
 
 // Detect basename for reverse proxy: if URL contains /proxy/3000, use everything up to and including it
@@ -21,6 +22,7 @@ function getBasename(): string {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter basename={getBasename()}>
+      <I18nProvider>
       <AuthProvider>
         <AppStateProvider>
           <ChartParamsProvider>
@@ -28,6 +30,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           </ChartParamsProvider>
         </AppStateProvider>
       </AuthProvider>
+      </I18nProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

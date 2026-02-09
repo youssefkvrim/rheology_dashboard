@@ -153,10 +153,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await keycloak.login({ redirectUri });
       },
       logout: async () => {
-        sessionStorage.removeItem('authed');
-        sessionStorage.removeItem('userId');
-        sessionStorage.removeItem('email');
-        sessionStorage.removeItem('role');
+          sessionStorage.removeItem('authed');
+          sessionStorage.removeItem('userId');
+          sessionStorage.removeItem('email');
+          sessionStorage.removeItem('role');
         setIsAuthenticated(false);
         setUser(null);
         if (!keycloak) {

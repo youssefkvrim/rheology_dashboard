@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing. This repository is a demo and proprietary; open external contributions may be limited. For internal contributors:
+Thanks for your interest in contributing. This repository is proprietary; open external contributions may be limited. For internal contributors:
 
 ## Scripts
 | Command | Purpose |

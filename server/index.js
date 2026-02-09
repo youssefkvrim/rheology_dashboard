@@ -16,7 +16,7 @@ const PORT = Number(process.env.BACKEND_PORT || 3001);
 
 const poolConfig = {
   server: process.env.MSSQL_SERVER, // e.g., Y005N8C.rd1.rf1
-  database: process.env.MSSQL_DATABASE, // e.g., PFX_suivi_barbotine
+  database: process.env.MSSQL_DATABASE, // e.g., PFX_MOULAGE_prod (was: PFX_suivi_barbotine)
   user: process.env.MSSQL_USER,
   password: process.env.MSSQL_PASSWORD,
   port: Number(process.env.MSSQL_PORT || 1433),

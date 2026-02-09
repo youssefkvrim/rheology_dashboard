@@ -25,6 +25,7 @@ export function MetricPanel(p: MetricPanelProps) {
   const xRectRef = useRef<{ x:number; width:number } | null>(null);
   const xDomainRef = useRef<[number, number] | null>(null);
   const xScaleRef = useRef<any>(null);
+
   function niceStep(span: number): number {
     if (!isFinite(span) || span <= 0) return 1;
     const k = Math.floor(Math.log10(span));
@@ -282,6 +283,7 @@ export function MetricPanel(p: MetricPanelProps) {
   }, [p.data, p.deltaY, errorBarIndexSet]);
 
   // Compute effective bounds for rendering without mutating inputs: if only one side provided, fill missing side virtually
+  // FIXED: Use actual bounds values without clipping to data range, so zones render correctly even when Y axis extends beyond data
   const effectiveBounds = useMemo(() => {
     if (!p.bounds) return undefined;
     const low = p.bounds.low;
@@ -294,13 +296,15 @@ export function MetricPanel(p: MetricPanelProps) {
     const step = niceStep(span);
     const baseLo = Math.max(0, Math.floor(dataMin / step) * step - step);
     const baseHi = Math.ceil(dataMax / step) * step + step;
-    const effLow = low == null ? baseLo : Math.max(Math.max(0, low), baseLo);
-    const effHigh = high == null ? baseHi : Math.min(high, baseHi);
+    // Use actual bounds values, only fallback to data-derived values when bounds are null
+    const effLow = low != null ? low : baseLo;
+    const effHigh = high != null ? high : baseHi;
     if (!(effHigh > effLow)) return undefined;
     return { low: effLow, high: effHigh };
   }, [p.bounds, p.data]);
 
   // Ensure the Y axis domain includes any user-provided bound(s)
+  // FIXED: Always include full bounds range so green/yellow zones render correctly
   const computedYDomain = useMemo(() => {
     const hasData = !!(p.data && p.data.length);
     const rawMin = hasData ? p.data.reduce((m, d) => (d.v < m ? d.v : m), p.data[0].v) : (p.bounds?.low ?? 0);
@@ -312,24 +316,21 @@ export function MetricPanel(p: MetricPanelProps) {
     // Start from data envelope
     let loCandidate = dataMin;
     let hiCandidate = dataMax;
-    const dataSpan = Math.max(1e-12, dataMax - dataMin);
 
-    // Include bounds if they are not excessively far from data envelope
+    // ALWAYS include bounds in the Y domain so zones render fully
+    // This ensures green/yellow zones are visible even if data doesn't reach those values
     if (p.bounds) {
-      const limitFactor = 4; // allow each side to expand up to 4x the data span
       if (p.bounds.low != null) {
-        const dist = dataMin - (p.bounds.low as number);
-        if (!hasData || dist <= limitFactor * dataSpan) loCandidate = Math.min(loCandidate, p.bounds.low as number);
+        loCandidate = Math.min(loCandidate, p.bounds.low as number);
       }
       if (p.bounds.high != null) {
-        const dist = (p.bounds.high as number) - dataMax;
-        if (!hasData || dist <= limitFactor * dataSpan) hiCandidate = Math.max(hiCandidate, p.bounds.high as number);
+        hiCandidate = Math.max(hiCandidate, p.bounds.high as number);
       }
     }
 
     const span = Math.max(1e-12, hiCandidate - loCandidate);
     const step = niceStep(span);
-    const margin = step * 0.5; // small margins around the visible range
+    const margin = step * 0.3; // small margins around the visible range
     let lo = Math.floor(loCandidate / step) * step - margin;
     let hi = Math.ceil(hiCandidate / step) * step + margin;
     if (!(hi > lo)) { const eps = Math.max(1e-6, Math.abs(lo) * 1e-6 + 1e-6); hi = lo + eps; }
@@ -458,7 +459,11 @@ export function MetricPanel(p: MetricPanelProps) {
           <Line type="monotone" dataKey="v" name={p.title} stroke={p.color || "#22c55e"} dot={false} activeDot={{ r: 4, fill: p.color || "#22c55e", stroke: "#ffffff", strokeWidth: 2 }} strokeWidth={2}>
             {p.deltaY ? <ErrorBar dataKey="errorY" width={2} stroke="#a8a29e" /> : null}
           </Line>
-          {p.avgOn && <Line type="monotone" dataKey="avg" name="Moyenne" stroke="#ef4444" dot={false} strokeDasharray="4 4" isAnimationActive={false} />}
+          {/* Average line: use ReferenceLine for single point, Line for multiple */}
+          {p.avgOn && p.data.length === 1 && p.data[0].avg != null && (
+            <ReferenceLine y={p.data[0].avg} stroke="#ef4444" strokeDasharray="4 4" />
+          )}
+          {p.avgOn && p.data.length > 1 && <Line type="monotone" dataKey="avg" name="Moyenne" stroke="#ef4444" dot={false} strokeDasharray="4 4" isAnimationActive={false} />}
           {trendPolyline && (
             (trendPolyline as any[]).map((pt:any, idx:number, arr:any[]) => (
               idx % 2 === 1 ? (
