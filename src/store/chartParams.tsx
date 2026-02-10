@@ -6,10 +6,9 @@ export type ChartMetricParams = {
   unit: string;
   avgOn: boolean;
   trendOn: boolean;
-  deltaY: number; // symmetric error ± delta
-  trendWindowMs: number; // 0 = full series
-  trendSegPct?: number; // 10..100 segmentation percent of X window
-  // Interpolation hover options
+  deltaY: number; // the +/- error margin around data points
+  trendWindowMs: number; // 0 means use the whole series
+  trendSegPct?: number; // how chunky the trend line segments are (10-100%)
   interpOn?: boolean;
   interpMode?: 'linear' | 'lagrange3';
 };
@@ -18,16 +17,17 @@ type ChartParamsState = Record<ChartMetricKey, ChartMetricParams>;
 type ChartParamsById = Record<string, ChartParamsState>;
 
 type ChartParamsContextValue = {
-  // Legacy global (kept for non-detail screens)
+  // global params for screens that dont care about specific slurry id
   params: ChartParamsState;
   setParams: (metric: ChartMetricKey, patch: Partial<ChartMetricParams>) => void;
-  // Scoped per barbotine ID
+  // per-slurry chart settings so each one can be tweaked independently
   getParamsFor: (id: string) => ChartParamsState;
   setParamsFor: (id: string, metric: ChartMetricKey, patch: Partial<ChartMetricParams>) => void;
 };
 
 const ChartParamsContext = createContext<ChartParamsContextValue | undefined>(undefined);
 
+// sensible defaults for every metric, nothing fancy
 const defaultParams: ChartParamsState = {
   densite: { unit: 'g/cm³', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
   viscosite: { unit: 'mPa·s', avgOn: true, trendOn: false, deltaY: 0, trendWindowMs: 0, trendSegPct: 100, interpOn: false, interpMode: 'linear' },
@@ -40,6 +40,7 @@ const defaultParams: ChartParamsState = {
 };
 
 export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ children }) => {
+  // try to restore chart settings from last session
   const [params, setParamsState] = useState<ChartParamsState>(() => {
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
@@ -48,6 +49,7 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
     } catch {}
     return defaultParams;
   });
+  // same but for the per-slurry overrides
   const [paramsById, setParamsById] = useState<ChartParamsById>(() => {
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
@@ -57,12 +59,14 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
     return {} as ChartParamsById;
   });
 
+  // auto-save global params whenever they change
   useEffect(() => {
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
       localStorage.setItem(`chartParams:${userId}`, JSON.stringify(params));
     } catch {}
   }, [params]);
+  // auto-save per-slurry params too
   useEffect(() => {
     try {
       const userId = sessionStorage.getItem('userId') || 'anonymous';
@@ -70,6 +74,7 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
     } catch {}
   }, [paramsById]);
 
+  // when someone logs in, reload their saved chart settings
   useEffect(() => {
     const onLogin = () => {
       try {
@@ -88,6 +93,7 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
     setParams: (metric, patch) => setParamsState(p => ({ ...p, [metric]: { ...p[metric], ...patch } })),
     getParamsFor: (id: string) => {
       const scoped = paramsById[id];
+      // if this slurry has custom params use those, otherwise just use the global defaults
       return scoped ? ({ ...defaultParams, ...scoped }) : defaultParams;
     },
     setParamsFor: (id: string, metric, patch) => setParamsById(prev => {
@@ -99,10 +105,9 @@ export const ChartParamsProvider: React.FC<{ children: React.ReactNode }>=({ chi
   return <ChartParamsContext.Provider value={value}>{children}</ChartParamsContext.Provider>;
 };
 
+// hook to use chart params anywhere, will yell at u if u forget the provider lol
 export function useChartParams() {
   const ctx = useContext(ChartParamsContext);
   if (!ctx) throw new Error('useChartParams must be used within ChartParamsProvider');
   return ctx;
 }
-
-

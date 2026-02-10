@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { BarbotineConfig } from '../types/domain';
 
+// the popup for creating a new barbotine (its a 2-step form: fill in -> confirm)
 export type BarbotineCreateDialogProps = {
   open: boolean;
   onClose: () => void;
@@ -8,10 +9,12 @@ export type BarbotineCreateDialogProps = {
 };
 
 export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
+  // which step of the form ur on: filling it out or reviewing before submit
   const [step, setStep] = useState<'form' | 'confirm'>('form');
   const [name, setName] = useState<string>('');
   const [type, setType] = useState<string>('M7-3');
   const [customType, setCustomType] = useState<string>('');
+  // which metrics are enabled (checkboxes)
   const [metrics, setMetrics] = useState<{ densite: boolean; viscosite: boolean; temperature: boolean; ph: boolean; pc: boolean; h2o: boolean; silice: boolean; grains: boolean }>(() => ({
     densite: true,
     viscosite: true,
@@ -22,6 +25,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
     silice: true,
     grains: true,
   }));
+  // whether each metric is entered manually or comes from a sensor
   const [modes, setModes] = useState<BarbotineConfig['modes']>({
     densite: 'manuel',
     viscosite: 'manuel',
@@ -29,6 +33,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
     pc: 'manuel',
   });
 
+  // u need at least a name to continue
   const valid = useMemo(() => {
     const hasName = !!name.trim();
     return hasName;
@@ -43,6 +48,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
           <label>Nom de la barbotine</label>
           <input style={{ minWidth: 260 }} type="text" placeholder="Ex: M7-3 009" value={name} onChange={e=> setName(e.target.value)} />
         </div>
+        {/* type dropdown, with a text field that appears if u pick "Custom" */}
         <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
           <label>Type</label>
           <select value={type} onChange={e=> setType(e.target.value)}>
@@ -55,6 +61,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
             <input style={{ minWidth: 180 }} type="text" placeholder="Type personnalisé" value={customType} onChange={e=> setCustomType(e.target.value)} />
           )}
         </div>
+        {/* checkboxes for all the metrics u wanna track */}
         <div style={{ marginTop: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Métriques</div>
           <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
@@ -68,8 +75,10 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
             ))}
           </div>
         </div>
+        {/* pick how each metric gets its data: manual typing or from a sensor */}
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Modes de saisie</div>
+          {/* density/viscosity/temp all share the same sensor (Rheonics) */}
           {(metrics.densite || metrics.viscosite || metrics.temperature) && (
             <div style={{ marginBottom: 8 }}>
               <div className="muted" style={{ marginBottom: 4 }}>Densité / Viscosité / Température</div>
@@ -84,6 +93,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
               </div>
             </div>
           )}
+          {/* covering power has its own sensor (BRET) */}
           {metrics.pc && (
             <div>
               <div className="muted" style={{ marginBottom: 4 }}>Pouvoir couvrant</div>
@@ -106,6 +116,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
     );
   }
 
+  // the "are u sure?" screen before actually creating it
   function renderConfirm() {
     const cfg: BarbotineConfig = { type: (type==='Custom' ? (customType.trim() || 'Custom') : type), metrics, modes };
     return (
@@ -144,6 +155,7 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
   }
 
   return (
+    // clicking outside closes it, clicking inside doesnt
     <div className="modal-backdrop" onClick={p.onClose}>
       <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '95vw' }}>
         <div className="modal-header" style={{ alignItems: 'center' }}>
@@ -157,5 +169,4 @@ export function BarbotineCreateDialog(p: BarbotineCreateDialogProps) {
     </div>
   );
 }
-
 

@@ -1,39 +1,35 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useAppState } from '../store/appState';
-import { Line, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts';
+import { useBarbotineStore } from '../store/barbotineStore';
+import { useBoundsStore } from '../store/boundsStore';
+import { useDoseStore } from '../store/doseStore';
+import { Line, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useChartParams } from '../store/chartParams';
-import { ParamsModal } from '../components/ParamsModal';
-import { MetricPanel } from '../components/MetricPanel';
+import { ChartPanel } from '../components/ChartPanel';
 import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
 import { fetchRheologyAll, ASSET_BASE } from '../services/api';
+import { FRONTEND_TO_DB, toFeKey } from '../shared/metricKeys';
 
-// Extended range type with all periods
+// all the time range options u can pick for zooming into charts
 type RangeKey = '3h' | '1d' | '7d' | '1m' | '3m' | '6m' | '1y' | '3y' | 'all' | 'specific';
+const RANGE_MS: Record<RangeKey, number> = {
+  '3h': 3 * 3600e3, '1d': 24 * 3600e3, '7d': 7 * 24 * 3600e3, '1m': 30 * 24 * 3600e3,
+  '3m': 90 * 24 * 3600e3, '6m': 180 * 24 * 3600e3, '1y': 365 * 24 * 3600e3, '3y': 3 * 365 * 24 * 3600e3,
+  'all': Infinity, 'specific': 0,
+};
 const ALL_RANGES: RangeKey[] = ['3h', '1d', '7d', '1m', '3m', '6m', '1y', '3y', 'all'];
 const RANGE_LABELS: Record<RangeKey, string> = {
   '3h': '3H', '1d': '1D', '7d': '7D', '1m': '1M', '3m': '3M', '6m': '6M', '1y': '1Y', '3y': '3Y', 'all': 'ALL', 'specific': 'Custom'
 };
-const RANGE_MS: Record<RangeKey, number> = {
-  '3h': 3 * 3600e3,
-  '1d': 24 * 3600e3,
-  '7d': 7 * 24 * 3600e3,
-  '1m': 30 * 24 * 3600e3,
-  '3m': 90 * 24 * 3600e3,
-  '6m': 180 * 24 * 3600e3,
-  '1y': 365 * 24 * 3600e3,
-  '3y': 3 * 365 * 24 * 3600e3,
-  'all': Infinity,
-  'specific': 0,
-};
 
-// TEST ONLY: Hardcoded ML output path used across all barbotines for preview.
-// Replace with real data binding and remove hardcoding.
+// where the AI analysis images live on the server
 const ML_BASE = `${ASSET_BASE}/Plaque%20ML/output/2CN2_007_2_03-11-2025T100656+1`;
 
+// this component shows all the AI stuff - the analyzed plate images + summary table
 function AiAnalysis() {
   const [summary, setSummary] = useState<Record<string, string> | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // fetches the csv summary from the ML pipeline and parses it into a key-value object
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -48,51 +44,34 @@ function AiAnalysis() {
         const obj: Record<string, string> = {};
         headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
         if (!cancelled) setSummary(obj);
-      } catch { /* ignore */ }
+      } catch { /* ngl dont care if this fails */ }
     })();
     return () => { cancelled = true; };
   }, []);
-  const items: Array<{ file: string; title: string; info: string }> = [
-    { file: 'plate.png', title: 'Plaque (crop)', info: 'Image recadrée de la plaque extraite du cliché' },
-    { file: 'histogram.png', title: 'Histogramme', info: 'Histogramme des intensités (niveaux de gris/luminosité)' },
-    { file: 'aggregates_overlay.png', title: 'Agrégats (overlay)', info: 'Superposition des zones agrégées sur l\'image' },
-    { file: 'aggregates_mask.png', title: 'Agrégats (mask)', info: 'Masque binaire des agrégats détectés' },
-    { file: 'tears_overlay.png', title: 'Larmes (overlay)', info: 'Superposition des zones de larmes sur l\'image' },
-    { file: 'tears_mask.png', title: 'Larmes (mask)', info: 'Masque binaire des larmes détectées' },
-    { file: 'tears_heatmap.png', title: 'Larmes (heatmap)', info: 'Carte de chaleur de l\'intensité des larmes' },
+  // all the AI output images we wanna show in the grid
+  const items = [
+    { file: 'plate.png', title: 'Plaque (crop)', info: 'Image recadrée de la plaque' },
+    { file: 'histogram.png', title: 'Histogramme', info: 'Histogramme des intensités' },
+    { file: 'aggregates_overlay.png', title: 'Agrégats (overlay)', info: 'Superposition des zones agrégées' },
+    { file: 'aggregates_mask.png', title: 'Agrégats (mask)', info: 'Masque binaire des agrégats' },
+    { file: 'tears_overlay.png', title: 'Larmes (overlay)', info: 'Superposition des larmes' },
+    { file: 'tears_mask.png', title: 'Larmes (mask)', info: 'Masque binaire des larmes' },
+    { file: 'tears_heatmap.png', title: 'Larmes (heatmap)', info: 'Carte de chaleur des larmes' },
   ];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div className="row" style={{ gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <h4 style={{ margin: 0 }}>Détails IA</h4>
-        <span className="muted">Prévisualisation test — à remplacer par les sorties réelles</span>
-        <button className="seg-btn" onClick={() => {
-          const files = [...items.map(it => it.file), 'summary.csv'];
-          files.forEach((f) => {
-            const a = document.createElement('a');
-            a.href = `${ML_BASE}/${f}`;
-            a.download = f;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          });
-        }}>Télécharger tout</button>
+        <span className="muted">Prévisualisation test</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
         {items.map((it, idx) => (
           <div key={it.file} className="panel" style={{ padding: 8, position: 'relative' }}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
               <strong>{it.title}</strong>
-              <span
-                onMouseEnter={() => setHoverIdx(idx)}
-                onMouseLeave={() => setHoverIdx(v => (v === idx ? null : v))}
-                style={{ position: 'relative', border: '1px solid var(--border)', borderRadius: 999, width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)', background: 'transparent', cursor: 'default' }}
-              >i
-                {hoverIdx === idx && (
-                  <div style={{ position: 'absolute', top: 22, right: 0, background: 'rgba(17,24,39,0.95)', color: '#f9fafb', padding: '6px 8px', fontSize: 12, borderRadius: 6, maxWidth: 260, zIndex: 30 }}>
-                    {it.info}
-                  </div>
-                )}
+              <span onMouseEnter={() => setHoverIdx(idx)} onMouseLeave={() => setHoverIdx(v => (v === idx ? null : v))}
+                style={{ position: 'relative', border: '1px solid var(--border)', borderRadius: 999, width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)', cursor: 'default' }}>i
+                {hoverIdx === idx && <div style={{ position: 'absolute', top: 22, right: 0, background: 'rgba(17,24,39,0.95)', color: '#f9fafb', padding: '6px 8px', fontSize: 12, borderRadius: 6, maxWidth: 260, zIndex: 30 }}>{it.info}</div>}
               </span>
             </div>
             <div style={{ marginTop: 8 }}>
@@ -107,13 +86,8 @@ function AiAnalysis() {
           <table className="table" style={{ width: '100%', fontSize: 12 }}>
             <tbody>
               {summary ? Object.entries(summary).map(([k, v]) => (
-                <tr key={k}>
-                  <td style={{ width: 260, color: 'var(--muted)' }}>{k}</td>
-                  <td>{v}</td>
-                </tr>
-              )) : (
-                <tr><td colSpan={2} className="muted">Résumé indisponible</td></tr>
-              )}
+                <tr key={k}><td style={{ width: 260, color: 'var(--muted)' }}>{k}</td><td>{v}</td></tr>
+              )) : <tr><td colSpan={2} className="muted">Résumé indisponible</td></tr>}
             </tbody>
           </table>
         </div>
@@ -122,695 +96,230 @@ function AiAnalysis() {
   );
 }
 
+// turns a timestamp into just hours:minutes
 function formatTime(ts: number) {
-  const d = new Date(ts); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+  const d = new Date(ts);
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 function formatDateTime(ts: number) {
   try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
 }
 
-function parseLocaleNumber(input: string): number | null | typeof NaN {
-  const s = (input ?? '').trim();
-  if (!s) return null;
-  const dot = (s.match(/\./g) || []).length;
-  const comma = (s.match(/,/g) || []).length;
-  if (dot + comma > 1) return NaN; // multiple separators
-  if (dot === 1 && comma === 1) return NaN; // both used
-  const normalized = s.replace(',', '.');
-  if (!/^[-+]?\d*(?:\.\d*)?$/.test(normalized)) return NaN;
-  const n = Number(normalized);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-function niceCeilMax(maxVal: number, step: number): number {
-  if (!Number.isFinite(maxVal)) return step;
-  return Math.ceil(maxVal / step) * step;
-}
-
+// the detail page for one specific slurry - all charts and controls live here
 export default function Detail() {
   const { id } = useParams();
-  const { seriesM7, bounds, setBounds, startMassTest, overrideLog, addOverride, addManualSample, getSeriesForRange, getSeriesBetween, doseRateLph, setDoseRateLph, coverPowerHistory, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc, doseRateHistory, barbotines, getBoundsFor, setBoundsFor } = useAppState();
-  const { params, setParams, getParamsFor, setParamsFor } = useChartParams();
+  const barbotines = useBarbotineStore(s => s.barbotines);
+  const { bounds, getBoundsFor, setBoundsFor } = useBoundsStore();
+  const { doseRateLph, setDoseRateLph, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc } = useDoseStore();
+  const { getParamsFor, setParamsFor, params: globalParams } = useChartParams();
+
+  // which time range each chart is zoomed to (saved in localstorage so it persists)
+  const [densRange, setDensRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:densite`) as RangeKey) || 'all');
+  const [viscRange, setViscRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:viscosite`) as RangeKey) || 'all');
+  const [tempRange, setTempRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:temperature`) as RangeKey) || 'all');
+  const [phRange, setPhRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:ph`) as RangeKey) || 'all');
+  const [pcRange, setPcRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:pc`) as RangeKey) || 'all');
+  const [h2oRange, setH2oRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:h2o`) as RangeKey) || 'all');
+  const [siliceRange, setSiliceRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:silice`) as RangeKey) || '3m');
+  const [grainsRange, setGrainsRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:grains`) as RangeKey) || '3m');
+
+  // toggles for showing the yellow "warning zone" bands on each chart
+  const [densCritOn, setDensCritOn] = useState(true); const [densCritPct, setDensCritPct] = useState(30);
+  const [viscCritOn, setViscCritOn] = useState(true); const [viscCritPct, setViscCritPct] = useState(30);
+  const [tempCritOn, setTempCritOn] = useState(true); const [tempCritPct, setTempCritPct] = useState(30);
+  const [phCritOn, setPhCritOn] = useState(true); const [phCritPct, setPhCritPct] = useState(30);
+  const [pcCritOn, setPcCritOn] = useState(true); const [pcCritPct, setPcCritPct] = useState(30);
+  const [h2oCritOn, setH2oCritOn] = useState(true); const [h2oCritPct, setH2oCritPct] = useState(30);
+  const [siliceCritOn, setSiliceCritOn] = useState(true); const [siliceCritPct, setSiliceCritPct] = useState(30);
+  const [grainsCritOn, setGrainsCritOn] = useState(true); const [grainsCritPct, setGrainsCritPct] = useState(30);
+
+  // custom date range that all charts share when u pick "specific"
+  const [specificStart, setSpecificStart] = useState('');
+  const [specificEnd, setSpecificEnd] = useState('');
+
+  // all the state for the cover power test (the one with calibration, dipping, measuring)
   const [massSeries, setMassSeries] = useState<{ t: number; v: number }[] | null>(null);
-  const [checkingBalance, setCheckingBalance] = useState<boolean>(false);
+  const [checkingBalance, setCheckingBalance] = useState(false);
   const [testState, setTestState] = useState<'idle' | 'calib' | 'trempe' | 'egouttage' | 'mesure' | 'termine'>('idle');
-  const [remaining, setRemaining] = useState<number>(0);
-  const [overrideText, setOverrideText] = useState('');
-  const [overrideJustif, setOverrideJustif] = useState('');
-  const [manual, setManual] = useState<{ densite?: string; viscosite?: string; ph?: string; temperature?: string }>({});
-  const [densRange, setDensRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:densite`) as RangeKey) || 'all');
-  const [viscRange, setViscRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:viscosite`) as RangeKey) || 'all');
-  const [tempRange, setTempRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:temperature`) as RangeKey) || 'all');
-  const [phRange, setPhRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:ph`) as RangeKey) || 'all');
-  // anchors for horizontal pan per chart
-  const [densAnchor, setDensAnchor] = useState<number | undefined>(undefined);
-  const [viscAnchor, setViscAnchor] = useState<number | undefined>(undefined);
-  const [tempAnchor, setTempAnchor] = useState<number | undefined>(undefined);
-  const [phAnchor, setPhAnchor] = useState<number | undefined>(undefined);
-  // vertical y domains adjustable by drag on Y axis area
-  const [densY, setDensY] = useState<[number, number]>([1.2, 1.5]);
-  const [viscY, setViscY] = useState<[number, number]>([250, 700]);
-  const [tempY, setTempY] = useState<[number, number]>([15, 35]);
-  const [phY, setPhY] = useState<[number, number]>([6.5, 9.8]);
-  // drag state
-  const dragRef = useRef<{ startX: number; startY: number; startAnchor: number; startYMin: number; startYMax: number; mode: 'x' | 'y' | null } | null>(null);
-  const [pcRange, setPcRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:pc`) as RangeKey) || 'all');
-  const [pcBounds, setPcBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.pc?.low ?? null, high: bounds.pc?.high ?? null }));
+  const [remaining, setRemaining] = useState(0);
   const [imageModal, setImageModal] = useState<'photo' | 'ai' | null>(null);
-  const [imgScale, setImgScale] = useState<number>(1);
-  const imgWrapRef = useRef<HTMLDivElement | null>(null);
-  const [specificStart, setSpecificStart] = useState<string>('');
-  const [specificEnd, setSpecificEnd] = useState<string>('');
-  const [showMenu, setShowMenu] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [densAvgOn, setDensAvgOn] = useState<boolean>(true);
-  const [viscAvgOn, setViscAvgOn] = useState<boolean>(true);
-  const [tempAvgOn, setTempAvgOn] = useState<boolean>(true);
-  const [phAvgOn, setPhAvgOn] = useState<boolean>(true);
-  const [pcAvgOn, setPcAvgOn] = useState<boolean>(true);
-  const [h2oAvgOn, setH2oAvgOn] = useState<boolean>(true);
-  const [h2oCritOn, setH2oCritOn] = useState<boolean>(true);
-  const [h2oCritPct, setH2oCritPct] = useState<number>(30);
-  const [h2oRange, setH2oRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:h2o`) as RangeKey) || 'all');
-  const [h2oBounds, setH2oBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.h2o.low, high: bounds.h2o.high }));
-  // Doseuse (visuel uniquement)
-  const [pumpConnected, setPumpConnected] = useState<boolean>(false);
-  const [pumpRunning, setPumpRunning] = useState<boolean>(false);
-  const [flowUnit, setFlowUnit] = useState<'L/h'|'L/day'>('L/h');
-  // critical zones settings (pre-activated at 30%)
-  const [densCritOn, setDensCritOn] = useState<boolean>(true);
-  const [densCritPct, setDensCritPct] = useState<number>(30);
-  const [viscCritOn, setViscCritOn] = useState<boolean>(true);
-  const [viscCritPct, setViscCritPct] = useState<number>(30);
-  const [tempCritOn, setTempCritOn] = useState<boolean>(true);
-  const [tempCritPct, setTempCritPct] = useState<number>(30);
-  const [phCritOn, setPhCritOn] = useState<boolean>(true);
-  const [phCritPct, setPhCritPct] = useState<number>(30);
-  const [pcCritOn, setPcCritOn] = useState<boolean>(true);
-  const [pcCritPct, setPcCritPct] = useState<number>(30);
 
-  // Extra panels: Silice and Grains
-  const [siliceRange, setSiliceRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:silice`) as RangeKey) || '3m');
-  const [grainsRange, setGrainsRange] = useState<RangeKey>(()=> (localStorage.getItem(`range:${id}:grains`) as RangeKey) || '3m');
-  const [siliceBounds, setSiliceBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.silice.low, high: bounds.silice.high }));
-  const [grainsBounds, setGrainsBounds] = useState<{ low: number | null; high: number | null }>(() => ({ low: bounds.grains.low, high: bounds.grains.high }));
-  const [siliceAvgOn, setSiliceAvgOn] = useState<boolean>(true);
-  const [grainsAvgOn, setGrainsAvgOn] = useState<boolean>(true);
-  const [siliceCritOn, setSiliceCritOn] = useState<boolean>(true);
-  const [siliceCritPct, setSiliceCritPct] = useState<number>(30);
-  const [grainsCritOn, setGrainsCritOn] = useState<boolean>(true);
-  const [grainsCritPct, setGrainsCritPct] = useState<number>(30);
+  // water pump connection stuff
+  const [pumpConnected] = useState(false);
+  const [flowUnit, setFlowUnit] = useState<'L/h' | 'L/day'>('L/h');
 
-  // Optional DB-backed series (overrides simulated series when present)
-  const [dbSeries, setDbSeries] = useState<null | { densite: { t:number; v:number }[]; viscosite: { t:number; v:number }[]; ph: { t:number; v:number }[]; temperature: { t:number; v:number }[] }>(null);
-  const [pcDb, setPcDb] = useState<null | { t:number; v:number }[]>(null);
-  const [h2oDb, setH2oDb] = useState<null | { t:number; v:number }[]>(null);
-  const [siliceDb, setSiliceDb] = useState<null | { t:number; v:number }[]>(null);
-  const [grainsDb, setGrainsDb] = useState<null | { t:number; v:number }[]>(null);
+  // all the data we pulled from the database for each metric
+  const [dbSeries, setDbSeries] = useState<null | { densite: { t: number; v: number }[]; viscosite: { t: number; v: number }[]; ph: { t: number; v: number }[]; temperature: { t: number; v: number }[] }>(null);
+  const [pcDb, setPcDb] = useState<null | { t: number; v: number }[]>(null);
+  const [h2oDb, setH2oDb] = useState<null | { t: number; v: number }[]>(null);
+  const [siliceDb, setSiliceDb] = useState<null | { t: number; v: number }[]>(null);
+  const [grainsDb, setGrainsDb] = useState<null | { t: number; v: number }[]>(null);
 
-  const current = useMemo(()=> barbotines.find(b => b.id === id) || null, [barbotines, id]);
+  const current = useMemo(() => barbotines.find(b => b.id === id) || null, [barbotines, id]);
   const sid = (current && (current as any).slurryId) as string | undefined;
+  const isOnline = !!current?.online;
+  const scopedBounds = useMemo(() => getBoundsFor(id || ''), [getBoundsFor, id]);
+  const scopedParams = useMemo(() => getParamsFor(id || ''), [getParamsFor, id]);
+  const setScoped = (metric: any, patch: any) => setParamsFor(id || '', metric, patch);
+
+  // grabs ALL data from the server for this slurry + updates bounds
   useEffect(() => {
     if (!sid) return;
     let cancelled = false;
     (async () => {
       try {
-        // Include silice and grain in the fetch
-        const { series, bounds } = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O','silice','grain'], true);
+        const allDbKeys = Object.values(FRONTEND_TO_DB);
+        const { series, bounds: fetchedBounds } = await fetchRheologyAll(sid, allDbKeys, true);
         if (cancelled) return;
+        const toS = (d: any) => ({ t: Number(d.t), v: Number(d.v) });
         setDbSeries({
-          densite: (series['density']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
-          viscosite: (series['viscosity']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
-          ph: (series['pH']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
-          temperature: (series['temperature']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })),
+          densite: (series[FRONTEND_TO_DB.densite] || []).map(toS),
+          viscosite: (series[FRONTEND_TO_DB.viscosite] || []).map(toS),
+          ph: (series[FRONTEND_TO_DB.ph] || []).map(toS),
+          temperature: (series[FRONTEND_TO_DB.temperature] || []).map(toS),
         });
-        setPcDb((series['pc']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
-        setH2oDb((series['H2O']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
-        setSiliceDb((series['silice']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
-        setGrainsDb((series['grain']||[]).map((d:any)=>({ t:Number(d.t), v:Number(d.v) })));
-        // Apply latest bounds (USL/LSL)
-        const keyMap: Record<string, any> = { density: 'densite', viscosity: 'viscosite', pH: 'ph', temperature: 'temperature', H2O: 'h2o', pc: 'pc', silice: 'silice', grain: 'grains' };
-        if (Array.isArray(bounds)) {
-          bounds.forEach((b:any) => {
-            const k = keyMap[b.key] || b.key;
+        setPcDb((series[FRONTEND_TO_DB.pc] || []).map(toS));
+        setH2oDb((series[FRONTEND_TO_DB.h2o] || []).map(toS));
+        setSiliceDb((series[FRONTEND_TO_DB.silice] || []).map(toS));
+        setGrainsDb((series[FRONTEND_TO_DB.grains] || []).map(toS));
+        if (Array.isArray(fetchedBounds)) {
+          fetchedBounds.forEach((b: any) => {
+            const k = toFeKey(b.key);
             setBoundsFor(id || '', k as any, { low: (b.lsl ?? b.low) ?? null, high: (b.usl ?? b.high) ?? null });
           });
         }
-      } catch {}
+      } catch { /* db probably down, oh well */ }
     })();
     return () => { cancelled = true; };
   }, [sid, id]);
 
-  function getSpecificRange(): [number, number] {
-    const now = Date.now();
-    const s = Date.parse(specificStart);
-    const e = Date.parse(specificEnd);
-    let start = Number.isFinite(s) ? s : now - 3600e3;
-    let end = Number.isFinite(e) ? e : now;
-    if (end <= start) end = start + 3600e3;
-    return [start, end];
-  }
-  const [specStart, specEnd] = getSpecificRange();
-  const isOnline = !!current?.online;
-  const scopedBounds = useMemo(()=> getBoundsFor(id || ''), [getBoundsFor, id]);
-  function filterByRange(arr: { t:number; v:number }[], range: typeof densRange, anchor?: number) {
-    if (!arr || !arr.length) return [] as { t:number; v:number }[];
-    const now = Date.now();
-    let end = Math.min(anchor ?? now, now);
-    let start = end - 3*60*60*1000;
-    if (range==='1d') start = end - 24*60*60*1000;
-    else if (range==='7d') start = end - 7*24*60*60*1000;
-    else if (range==='1m') start = end - 30*24*60*60*1000;
-    else if (range==='3m') start = end - 90*24*60*60*1000;
-    else if (range==='all') { start = 0; }
-    else if (range==='specific') { start = specStart; end = specEnd; }
-    return arr.filter(p => p.t >= start && p.t <= end);
-  }
-  const densSource = dbSeries ? filterByRange(dbSeries.densite, densRange, densAnchor) : [];
-  const viscSource = dbSeries ? filterByRange(dbSeries.viscosite, viscRange, viscAnchor) : [];
-  const tempSource = dbSeries ? filterByRange(dbSeries.temperature, tempRange, tempAnchor) : [];
-  const phSource = dbSeries ? filterByRange(dbSeries.ph, phRange, phAnchor) : [];
-  const densiteData = useMemo(() => densSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(3)) })), [densSource]);
-  // Preserve decimal values for viscosity (don't round)
-  const viscositeData = useMemo(() => viscSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [viscSource]);
-  const phData = useMemo(() => phSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [phSource]);
-  const tempData = useMemo(() => tempSource.map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) })), [tempSource]);
-  const densAvg = useMemo(() => densiteData.length ? Number((densiteData.reduce((s,d)=>s+d.value,0)/densiteData.length).toFixed(3)) : null, [densiteData]);
-  const densSeries = useMemo(()=> densiteData.map(d=>({ ...d, avg: densAvg ?? undefined })), [densiteData, densAvg]);
-  const viscAvg = useMemo(() => viscositeData.length ? Number((viscositeData.reduce((s,d)=>s+d.value,0)/viscositeData.length).toFixed(0)) : null, [viscositeData]);
-  const viscSeries = useMemo(()=> viscositeData.map(d=>({ ...d, avg: viscAvg ?? undefined })), [viscositeData, viscAvg]);
-  const tempAvg = useMemo(() => tempData.length ? Number((tempData.reduce((s,d)=>s+d.value,0)/tempData.length).toFixed(2)) : null, [tempData]);
-  const tempSeries = useMemo(()=> tempData.map(d=>({ ...d, avg: tempAvg ?? undefined })), [tempData, tempAvg]);
-  const phAvg = useMemo(() => phData.length ? Number((phData.reduce((s,d)=>s+d.value,0)/phData.length).toFixed(2)) : null, [phData]);
-  const phSeries = useMemo(()=> phData.map(d=>({ ...d, avg: phAvg ?? undefined })), [phData, phAvg]);
+  // parses the custom date inputs into timestamps
+  const specStart = useMemo(() => { const s = Date.parse(specificStart); return Number.isFinite(s) ? s : Date.now() - 3600e3; }, [specificStart]);
+  const specEnd = useMemo(() => { const e = Date.parse(specificEnd); return Number.isFinite(e) ? e : Date.now(); }, [specificEnd]);
 
-  // Unit conversions for panels (target units come from chart params context)
-  const scopedParams = useMemo(() => getParamsFor(id || ''), [getParamsFor, id]);
-  const setScoped = (metric: any, patch: any) => setParamsFor(id || '', metric, patch);
+  // filters data points to only show whats in the selected time range
+  function filterByRange(arr: { t: number; v: number }[], range: RangeKey) {
+    if (!arr || !arr.length) return [];
+    const now = Date.now();
+    if (range === 'all') return arr;
+    if (range === 'specific') return arr.filter(p => p.t >= specStart && p.t <= specEnd);
+    const ms = RANGE_MS[range] || 3600e3;
+    const start = now - ms;
+    return arr.filter(p => p.t >= start);
+  }
+
+  // takes raw data, filters by range, converts units, and adds an avg line
+  function buildPanelData(source: { t: number; v: number }[] | null, range: RangeKey, conv?: { to: (v: number) => number }) {
+    const raw = source ? filterByRange(source, range) : [];
+    if (!raw.length) return [];
+    const avg = raw.reduce((s, d) => s + d.v, 0) / raw.length;
+    const to = conv?.to || ((v: number) => v);
+    return raw.map(d => ({ t: d.t, v: to(d.v), avg: to(avg) }));
+  }
+
+  // converts values between units (like kg/m³ to g/cm³ etc)
   const densConv = useMemo(() => densConverters(scopedParams.densite.unit), [scopedParams.densite.unit]);
-  const densPanelData = useMemo(() => densSeries.map(d => ({ t: d.time, v: densConv.to(d.value), avg: d.avg != null ? densConv.to(d.avg) : undefined })), [densSeries, densConv]);
-  const densYConv = useMemo(() => [densConv.to(densY[0]), densConv.to(densY[1])] as [number, number], [densY, densConv]);
-  const densBoundsConv = useMemo(() => ({ low: scopedBounds.densite.low==null?null:densConv.to(scopedBounds.densite.low as number), high: scopedBounds.densite.high==null?null:densConv.to(scopedBounds.densite.high as number) }), [scopedBounds.densite, densConv]);
-
   const viscConv = useMemo(() => viscConverters(scopedParams.viscosite.unit), [scopedParams.viscosite.unit]);
-  const viscPanelData = useMemo(() => viscSeries.map(d => ({ t: d.time, v: viscConv.to(d.value), avg: d.avg != null ? viscConv.to(d.avg) : undefined })), [viscSeries, viscConv]);
-  const viscYConv = useMemo(() => [viscConv.to(viscY[0]), viscConv.to(viscY[1])] as [number, number], [viscY, viscConv]);
-  const viscBoundsConv = useMemo(() => ({ low: scopedBounds.viscosite.low==null?null:viscConv.to(scopedBounds.viscosite.low as number), high: scopedBounds.viscosite.high==null?null:viscConv.to(scopedBounds.viscosite.high as number) }), [scopedBounds.viscosite, viscConv]);
-
   const tempConv = useMemo(() => tempConverters(scopedParams.temperature.unit), [scopedParams.temperature.unit]);
-  const tempPanelData = useMemo(() => tempSeries.map(d => ({ t: d.time, v: tempConv.to(d.value), avg: d.avg != null ? tempConv.to(d.avg) : undefined })), [tempSeries, tempConv]);
-  const tempYConv = useMemo(() => [tempConv.to(tempY[0]), tempConv.to(tempY[1])] as [number, number], [tempY, tempConv]);
-  const tempBoundsConv = useMemo(() => ({ low: scopedBounds.temperature.low==null?null:tempConv.to(scopedBounds.temperature.low as number), high: scopedBounds.temperature.high==null?null:tempConv.to(scopedBounds.temperature.high as number) }), [scopedBounds.temperature, tempConv]);
-
-  const phPanelData = useMemo(() => phSeries.map(d => ({ t: d.time, v: d.value, avg: d.avg })), [phSeries]);
   const h2oConv = useMemo(() => h2oConverters(scopedParams.h2o.unit), [scopedParams.h2o.unit]);
-  const h2oPanelData = useMemo(() => {
-    const src = (h2oDb || []).map(p => ({ t: Number(p.t), v: Number(p.v) }));
-    const data = filterByRange(src, h2oRange);
-    if (!data.length) return [] as { t:number; v:number; avg?: number }[];
-    const avg = Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3));
-    return data.map(d => ({ t: d.t, v: h2oConv.to(d.v), avg: h2oConv.to(avg) }));
-  }, [h2oDb, h2oRange, h2oConv, specStart, specEnd, densRange, viscRange, tempRange, phRange]);
-  const h2oYConv = useMemo(() => [h2oConv.to(0), h2oConv.to(0.05)] as [number, number], [h2oConv]);
-  const h2oBoundsConv = useMemo(() => ({ low: scopedBounds.h2o.low==null?null:h2oConv.to(scopedBounds.h2o.low as number), high: scopedBounds.h2o.high==null?null:h2oConv.to(scopedBounds.h2o.high as number) }), [scopedBounds.h2o, h2oConv]);
+  const pcConv = useMemo(() => pcConverters(scopedParams.pc.unit), [scopedParams.pc.unit]);
+
+  // the actual processed data that gets fed into each chart
+  const densPanelData = useMemo(() => buildPanelData(dbSeries?.densite || null, densRange, densConv), [dbSeries, densRange, densConv, specStart, specEnd]);
+  const viscPanelData = useMemo(() => buildPanelData(dbSeries?.viscosite || null, viscRange, viscConv), [dbSeries, viscRange, viscConv, specStart, specEnd]);
+  const tempPanelData = useMemo(() => buildPanelData(dbSeries?.temperature || null, tempRange, tempConv), [dbSeries, tempRange, tempConv, specStart, specEnd]);
+  const phPanelData = useMemo(() => buildPanelData(dbSeries?.ph || null, phRange), [dbSeries, phRange, specStart, specEnd]);
+  const pcPanelData = useMemo(() => buildPanelData(pcDb, pcRange, pcConv), [pcDb, pcRange, pcConv, specStart, specEnd]);
+  const h2oPanelData = useMemo(() => buildPanelData(h2oDb, h2oRange, h2oConv), [h2oDb, h2oRange, h2oConv, specStart, specEnd]);
+  const silicePanelData = useMemo(() => buildPanelData(siliceDb, siliceRange), [siliceDb, siliceRange, specStart, specEnd]);
+  const grainsPanelData = useMemo(() => buildPanelData(grainsDb, grainsRange), [grainsDb, grainsRange, specStart, specEnd]);
+
+  // converts the min/max limits to whatever unit the user picked
+  const convBounds = (b: { low: number | null; high: number | null }, conv?: { to: (v: number) => number }) => {
+    const to = conv?.to || ((v: number) => v);
+    return { low: b.low == null ? null : to(b.low), high: b.high == null ? null : to(b.high) };
+  };
+
+  // figures out if we should recommend adjusting the water flow based on viscosity
+  const viscositeData = useMemo(() => dbSeries ? filterByRange(dbSeries.viscosite, viscRange) : [], [dbSeries, viscRange, specStart, specEnd]);
   const proposedFlowLph = useMemo(() => {
-    const lastV = viscositeData[viscositeData.length-1]?.value;
+    const lastV = viscositeData[viscositeData.length - 1]?.v;
     const b = scopedBounds.viscosite;
     if (lastV == null || (b.low == null && b.high == null)) return doseRateLph;
     if (b.high != null && lastV > (b.high as number)) return Number((doseRateLph + 0.005).toFixed(3));
     if (b.low != null && lastV < (b.low as number)) return Number((Math.max(0, doseRateLph - 0.005)).toFixed(3));
     return doseRateLph;
   }, [viscositeData, scopedBounds.viscosite, doseRateLph]);
-  const toUnit = (lph: number, unit: 'L/h'|'L/day') => unit === 'L/h' ? lph : Number((lph * 24).toFixed(3));
+  // quick helper to switch between liters/hour and liters/day
+  const toUnit = (lph: number, unit: 'L/h' | 'L/day') => unit === 'L/h' ? lph : Number((lph * 24).toFixed(3));
 
-  const pcConv = useMemo(() => pcConverters(scopedParams.pc.unit), [scopedParams.pc.unit]);
-  const pcHistData = useMemo(() => {
-    const source = pcDb || [];
-    if (!source.length) return [] as any[];
-    const now = Date.now();
-    if (pcRange === 'specific') {
-      return (source as any[]).filter((p:any) => p.t >= specStart && p.t <= specEnd);
-    }
-    const ms = RANGE_MS[pcRange] || 365*24*60*60*1000;
-    const start = now - ms;
-    return (source as any[]).filter((p:any) => p.t >= start);
-  }, [pcDb, pcRange, specStart, specEnd]);
-  const pcPanelData = useMemo(() => {
-    const avg = pcHistData.length ? Number((pcHistData.reduce((s,d)=>s+d.v,0)/pcHistData.length).toFixed(3)) : null;
-    return pcHistData.map(d => ({ t: d.t, v: pcConv.to(d.v), avg: avg != null ? pcConv.to(avg) : undefined }));
-  }, [pcHistData, pcConv]);
-  const pcBoundsConv = useMemo(() => ({ low: (scopedBounds.pc?.low==null)?null:pcConv.to(scopedBounds.pc.low as number), high: (scopedBounds.pc?.high==null)?null:pcConv.to(scopedBounds.pc.high as number) }), [scopedBounds.pc, pcConv]);
-
-  // Silice panel data
-  const silicePanelData = useMemo(() => {
-    const src = (siliceDb || []).map(p => ({ t: Number(p.t), v: Number(p.v) }));
-    const data = filterByRange(src, siliceRange);
-    if (!data.length) return [] as { t:number; v:number; avg?: number }[];
-    const avg = Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3));
-    return data.map(d => ({ t: d.t, v: d.v, avg }));
-  }, [siliceDb, siliceRange, specStart, specEnd]);
-  const siliceBoundsConv = useMemo(() => ({ low: scopedBounds.silice?.low ?? null, high: scopedBounds.silice?.high ?? null }), [scopedBounds.silice]);
-
-  // Grains panel data
-  const grainsPanelData = useMemo(() => {
-    const src = (grainsDb || []).map(p => ({ t: Number(p.t), v: Number(p.v) }));
-    const data = filterByRange(src, grainsRange);
-    if (!data.length) return [] as { t:number; v:number; avg?: number }[];
-    const avg = Number((data.reduce((s,d)=>s+d.v,0)/data.length).toFixed(3));
-    return data.map(d => ({ t: d.t, v: d.v, avg }));
-  }, [grainsDb, grainsRange, specStart, specEnd]);
-  const grainsBoundsConv = useMemo(() => ({ low: scopedBounds.grains?.low ?? null, high: scopedBounds.grains?.high ?? null }), [scopedBounds.grains]);
-
-  const pcYStats = useMemo(() => {
-    if (!pcHistData.length) return { min: 0, max: 0 };
-    let min = pcHistData[0].v, max = pcHistData[0].v;
-    for (const p of pcHistData) { if (p.v < min) min = p.v; if (p.v > max) max = p.v; }
-    return { min, max };
-  }, [pcHistData]);
-
-  const reco = useMemo(() => {
-    if (!viscositeData.length) return '—';
-    const latest = viscositeData[viscositeData.length - 1].value;
-    if (bounds.viscosite.high == null) return '—';
-    return latest > (bounds.viscosite.high as number) ? 'Ajouter eau' : 'Ne rien faire';
-  }, [viscositeData, bounds.viscosite.high]);
-
-  function mkTooltip(unit: string, metricLabel: string) {
-    return (val: any, name: any, props: any) => {
-      const valueStr = `${val} ${unit}`.trim();
-      const label = name === 'Average' ? 'Average' : metricLabel;
-      return [valueStr, label];
-    };
+  function mkTooltip(unit: string, label: string) {
+    return (val: any, name: any) => [`${val} ${unit}`.trim(), name === 'Average' ? 'Average' : label];
   }
 
-  function renderParamsModal(
-    menuKey: string,
-    title: string,
-    cfg: {
-      onClose: () => void;
-      onSetRangeSpecific: () => void;
-      unit: string;
-      showAvg?: boolean;
-      avgOn?: boolean;
-      setAvgOn?: (v: boolean) => void;
-      critOn?: boolean;
-      setCritOn?: (v: boolean) => void;
-      critPct?: number;
-      setCritPct?: (n: number) => void;
-      low: number | null;
-      high: number | null;
-      setLow: (n: number | null) => void;
-      setHigh: (n: number | null) => void;
-      draftKey: string;
-    }
-  ) {
-    return (
-      <div className="modal-backdrop" onClick={() => cfg.onClose()}>
-        <div className="modal" onClick={e => e.stopPropagation()}>
-          <div className="modal-header">
-            <h3 style={{ margin: 0 }}>{title}</h3>
-            <button onClick={() => cfg.onClose()}>Fermer</button>
-          </div>
-          <div className="modal-body">
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <label>Période personnalisée:</label>
-              <label>Début</label>
-              <input type="datetime-local" value={specificStart} onChange={(e) => { setSpecificStart(e.target.value); cfg.onSetRangeSpecific(); }} />
-              <label>Fin</label>
-              <input type="datetime-local" value={specificEnd} onChange={(e) => { setSpecificEnd(e.target.value); cfg.onSetRangeSpecific(); }} />
-            </div>
-            {(specificStart && specificEnd && Date.parse(specificEnd) <= Date.parse(specificStart)) && (
-              <div className="muted">Fin doit être supérieure au Début</div>
-            )}
-            <div className="row" style={{ gap: 8 }}>
-              <label>Conformité min/max:</label>
-              <input type="text" inputMode="decimal" placeholder="min" style={{ width: 90 }} value={draft[`${cfg.draftKey}.low`] ?? (cfg.low ?? '')}
-                onChange={e => { setDraft(prev => ({ ...prev, [`${cfg.draftKey}.low`]: e.target.value })); const v = parseLocaleNumber(e.target.value); if (v === null) { cfg.setLow(null); } else if (!Number.isNaN(v)) { cfg.setLow(v as number); } }} />
-              <input type="text" inputMode="decimal" placeholder="max" style={{ width: 90 }} value={draft[`${cfg.draftKey}.high`] ?? (cfg.high ?? '')}
-                onChange={e => { setDraft(prev => ({ ...prev, [`${cfg.draftKey}.high`]: e.target.value })); const v = parseLocaleNumber(e.target.value); if (v === null) { cfg.setHigh(null); } else if (!Number.isNaN(v)) { cfg.setHigh(v as number); } }} />
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <label>Unité:</label>
-              <select value={cfg.unit} onChange={()=>{}}><option value={cfg.unit}>{cfg.unit}</option></select>
-            </div>
-            {cfg.setAvgOn && (
-              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                <label>Moyenne</label>
-                <input type="checkbox" checked={!!cfg.avgOn} onChange={e=>cfg.setAvgOn!(e.target.checked)} />
-              </div>
-            )}
-            {cfg.setCritOn && cfg.setCritPct && (
-              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                <label>Zones critiques (%)</label>
-                <input type="checkbox" checked={!!cfg.critOn} onChange={e=>cfg.setCritOn!(e.target.checked)} />
-                <input type="range" min={0} max={60} step={5} value={cfg.critPct} onChange={e=>cfg.setCritPct!(Number(e.target.value))} />
-                <span className="muted">{cfg.critPct}%</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // bundling up the custom date range stuff so we dont repeat it 8 times
+  const specProps = { specificStart, specificEnd, setSpecificStart, setSpecificEnd };
 
   return (
     <div>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>Barbotine {id}</h2>
-        {showMenu==='h2o' && (
-          <ParamsModal
-            title="Paramètres Débit H₂O"
-            specificStart={specificStart}
-            specificEnd={specificEnd}
-            setSpecificStart={setSpecificStart}
-            setSpecificEnd={setSpecificEnd}
-            onSetRangeSpecific={() => { setH2oRange('specific'); localStorage.setItem(`range:${id}:h2o`, 'specific'); }}
-            unit={scopedParams.h2o.unit}
-            unitOptions={["L/h","L/day","mL/min","mL/s"]}
-            setUnit={(u)=> setScoped('h2o', { unit: u })}
-            avgOn={scopedParams.h2o.avgOn}
-            setAvgOn={(v)=> setScoped('h2o', { avgOn: v })}
-            trendOn={scopedParams.h2o.trendOn}
-            setTrendOn={(v)=> setScoped('h2o', { trendOn: v })}
-              trendSegPct={scopedParams.h2o.trendSegPct}
-              setTrendSegPct={(n)=> setScoped('h2o', { trendSegPct: n })}
-            deltaY={scopedParams.h2o.deltaY}
-            setDeltaY={(n)=> setScoped('h2o', { deltaY: n })}
-            low={scopedBounds.h2o.low}
-            high={scopedBounds.h2o.high}
-            setLow={(n)=> setBoundsFor(id || '', 'h2o', { ...scopedBounds.h2o, low: n })}
-            setHigh={(n)=> setBoundsFor(id || '', 'h2o', { ...scopedBounds.h2o, high: n })}
-            critOn={h2oCritOn}
-            setCritOn={setH2oCritOn}
-            critPct={h2oCritPct}
-            setCritPct={setH2oCritPct}
-            onClose={() => setShowMenu(null)}
-          />
-        )}
       </div>
+
+      {/* density + viscosity charts */}
       <div className="section" style={{ marginTop: 12 }}>
-        {/* Row 1: Densité (left) */}
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Densité (g/cm³)</h3>
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                  <button key={r} className={`seg-btn ${densRange===r?'active':''}`} onClick={() => { setDensRange(r); localStorage.setItem(`range:${id}:densite`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-                <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('densite')}>…</button>
-              </div>
-            </div>
-          </div>
-          {showMenu==='densite' && (
-            <ParamsModal
-              title="Paramètres Densité"
-              specificStart={specificStart}
-              specificEnd={specificEnd}
-              setSpecificStart={setSpecificStart}
-              setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={() => { setDensRange('specific'); localStorage.setItem(`range:${id}:densite`, 'specific'); }}
-              unit={scopedParams.densite.unit}
-              unitOptions={["kg/m³","g/cm³","g/mL","kg/L","g/L","mg/mL"]}
-              setUnit={(u)=> setScoped('densite', { unit: u })}
-              avgOn={scopedParams.densite.avgOn}
-              setAvgOn={(v)=> setScoped('densite', { avgOn: v })}
-              trendOn={scopedParams.densite.trendOn}
-              setTrendOn={(v)=> setScoped('densite', { trendOn: v })}
-              trendSegPct={scopedParams.densite.trendSegPct}
-              setTrendSegPct={(n)=> setScoped('densite', { trendSegPct: n })}
-              deltaY={scopedParams.densite.deltaY}
-              setDeltaY={(n)=> setScoped('densite', { deltaY: n })}
-              low={scopedBounds.densite.low}
-              high={scopedBounds.densite.high}
-              setLow={(n)=> setBoundsFor(id || '', 'densite', { ...scopedBounds.densite, low: n })}
-              setHigh={(n)=> setBoundsFor(id || '', 'densite', { ...scopedBounds.densite, high: n })}
-              critOn={densCritOn}
-              setCritOn={setDensCritOn}
-              critPct={densCritPct}
-              setCritPct={setDensCritPct}
-              onClose={()=> setShowMenu(null)}
-            />
-          )}
-          <div className="chart">
-            <div
-              className="pan-layer"
-              onMouseDown={(e) => {
-                const lastT = densiteData[densiteData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: densAnchor ?? lastT, startYMin: densY[0], startYMax: densY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onMouseMove={(e) => {
-                if (!dragRef.current) return;
-                const dx = e.clientX - dragRef.current.startX;
-                const dy = e.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) {
-                  dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                }
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[densRange] || 3600e3;
-                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
-                  setDensAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / (e.currentTarget.clientHeight || 1);
-                  setDensY([Number((min0+dy*perPx).toFixed(3)), Number((max0+dy*perPx).toFixed(3))]);
-                }
-              }}
-              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onWheel={(e) => {
-                // Scroll wheel zoom: up = zoom in (reduce range), down = zoom out (increase range)
-                const factor = e.deltaY > 0 ? 1.15 : 0.87; // 15% zoom per scroll
-                const [min0, max0] = densY;
-                const mid = (min0 + max0) / 2;
-                const halfRange = ((max0 - min0) / 2) * factor;
-                setDensY([Number((mid - halfRange).toFixed(3)), Number((mid + halfRange).toFixed(3))]);
-                e.preventDefault();
-              }}
-              onTouchStart={(e) => {
-                const t = e.touches[0];
-                const lastT = densiteData[densiteData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: t.clientX, startY: t.clientY, startAnchor: densAnchor ?? lastT, startYMin: densY[0], startYMax: densY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onTouchMove={(e) => {
-                if (!dragRef.current) return;
-                const t = e.touches[0];
-                const dx = t.clientX - dragRef.current.startX;
-                const dy = t.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[densRange] || 3600e3;
-                  const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
-                  setDensAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / ((e.currentTarget as HTMLDivElement).clientHeight || 1);
-                  setDensY([Number((min0+dy*perPx).toFixed(3)), Number((max0+dy*perPx).toFixed(3))]);
-                }
-              }}
-              onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-            />
-            <ResponsiveContainer>
-              <MetricPanel
-                title="Densité"
-                unitLabel={scopedParams.densite.unit}
-                data={densPanelData}
-                yDomain={densYConv as any}
-                avgOn={scopedParams.densite.avgOn}
-                trendOn={scopedParams.densite.trendOn}
-                trendSegPct={scopedParams.densite.trendSegPct}
-                deltaY={scopedParams.densite.deltaY}
-            bounds={densPanelData.length ? (densBoundsConv as any) : undefined}
-                critPct={densCritOn ? densCritPct : undefined}
-                color="#60a5fa"
-                trendWindowMs={scopedParams.densite.trendWindowMs}
-                rangeKey={densRange}
-              />
-            </ResponsiveContainer>
-          </div>
-        </div>
-        {/* Row 1 right: Viscosité */}
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Viscosité (mPa·s)</h3>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                <button key={r} className={`seg-btn ${viscRange===r?'active':''}`} onClick={() => { setViscRange(r); localStorage.setItem(`range:${id}:viscosite`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-              <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('visco')}>…</button>
-            </div>
-          </div>
-          {showMenu==='visco' && (
-            <ParamsModal
-              title="Paramètres Viscosité"
-              specificStart={specificStart}
-              specificEnd={specificEnd}
-              setSpecificStart={setSpecificStart}
-              setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> { setViscRange('specific'); localStorage.setItem(`range:${id}:viscosite`, 'specific'); }}
-              unit={scopedParams.viscosite.unit}
-              unitOptions={["Pa·s","mPa·s","cP","P","St","cSt","s"]}
-              setUnit={(u)=> setScoped('viscosite', { unit: u })}
-              avgOn={scopedParams.viscosite.avgOn}
-              setAvgOn={(v)=> setScoped('viscosite', { avgOn: v })}
-              trendOn={scopedParams.viscosite.trendOn}
-              setTrendOn={(v)=> setScoped('viscosite', { trendOn: v })}
-              trendSegPct={scopedParams.viscosite.trendSegPct}
-              setTrendSegPct={(n)=> setScoped('viscosite', { trendSegPct: n })}
-              deltaY={scopedParams.viscosite.deltaY}
-              setDeltaY={(n)=> setScoped('viscosite', { deltaY: n })}
-              low={scopedBounds.viscosite.low}
-              high={scopedBounds.viscosite.high}
-              setLow={(n)=> setBoundsFor(id || '', 'viscosite', { ...scopedBounds.viscosite, low: n })}
-              setHigh={(n)=> setBoundsFor(id || '', 'viscosite', { ...scopedBounds.viscosite, high: n })}
-              critOn={viscCritOn}
-              setCritOn={setViscCritOn}
-              critPct={viscCritPct}
-              setCritPct={setViscCritPct}
-              onClose={()=> setShowMenu(null)}
-            />
-          )}
-          <div className="chart">
-            <div
-              className="pan-layer"
-              onMouseDown={(e) => {
-                const lastT = viscositeData[viscositeData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: viscAnchor ?? lastT, startYMin: viscY[0], startYMax: viscY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onMouseMove={(e) => {
-                if (!dragRef.current) return;
-                const dx = e.clientX - dragRef.current.startX;
-                const dy = e.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[viscRange] || 3600e3;
-                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
-                  setViscAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / (e.currentTarget.clientHeight || 1);
-                  setViscY([Math.round(min0+dy*perPx), Math.round(max0+dy*perPx)] as any);
-                }
-              }}
-              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onWheel={(e) => {
-                const factor = e.deltaY > 0 ? 1.15 : 0.87;
-                const [min0, max0] = viscY;
-                const mid = (min0 + max0) / 2;
-                const halfRange = ((max0 - min0) / 2) * factor;
-                setViscY([Math.round(mid - halfRange), Math.round(mid + halfRange)]);
-                e.preventDefault();
-              }}
-              onTouchStart={(e) => {
-                const t = e.touches[0];
-                const lastT = viscositeData[viscositeData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: t.clientX, startY: t.clientY, startAnchor: viscAnchor ?? lastT, startYMin: viscY[0], startYMax: viscY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onTouchMove={(e) => {
-                if (!dragRef.current) return;
-                const t = e.touches[0];
-                const dx = t.clientX - dragRef.current.startX;
-                const dy = t.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[viscRange] || 3600e3;
-                  const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
-                  setViscAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / ((e.currentTarget as HTMLDivElement).clientHeight || 1);
-                  setViscY([Math.round(min0+dy*perPx), Math.round(max0+dy*perPx)] as any);
-                }
-              }}
-              onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-            />
-            <MetricPanel
-              title="Viscosité"
-              unitLabel={scopedParams.viscosite.unit}
-              data={viscPanelData}
-              yDomain={viscYConv as any}
-              avgOn={scopedParams.viscosite.avgOn}
-              trendOn={scopedParams.viscosite.trendOn}
-              trendSegPct={scopedParams.viscosite.trendSegPct}
-              deltaY={scopedParams.viscosite.deltaY}
-            bounds={viscPanelData.length ? (viscBoundsConv as any) : undefined}
-              critPct={viscCritOn ? viscCritPct : undefined}
-              color="#34d399"
-              trendWindowMs={scopedParams.viscosite.trendWindowMs}
-              rangeKey={viscRange}
-            />
-          </div>
-        </div>
-        {/* Row 2 left: Pouvoir couvrant - Historique */}
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Pouvoir couvrant - Historique (g)</h3>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                <button key={r} className={`seg-btn ${pcRange===r?'active':''}`} onClick={() => { setPcRange(r); localStorage.setItem(`range:${id}:pc`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-              <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('pc-hist')}>…</button>
-            </div>
-          </div>
-          <div className="chart">
-            <ResponsiveContainer>
-              <MetricPanel
-                title="Pouvoir couvrant"
-                unitLabel={scopedParams.pc.unit}
-                data={pcPanelData}
-                avgOn={isOnline ? scopedParams.pc.avgOn : false}
-                trendOn={isOnline ? scopedParams.pc.trendOn : false}
-              trendSegPct={scopedParams.pc.trendSegPct}
-                deltaY={scopedParams.pc.deltaY}
-                bounds={pcPanelData.length ? (pcBoundsConv as any) : undefined}
-              critPct={pcCritOn ? pcCritPct : undefined}
-                color="#38bdf8"
-                trendWindowMs={scopedParams.pc.trendWindowMs}
-                rangeKey={pcRange}
-              />
-            </ResponsiveContainer>
-          </div>
-        </div>
-         {showMenu==='pc-hist' && (
-           <ParamsModal
-             title="Paramètres Pouvoir couvrant (historique)"
-             specificStart={specificStart}
-             specificEnd={specificEnd}
-             setSpecificStart={setSpecificStart}
-             setSpecificEnd={setSpecificEnd}
-             onSetRangeSpecific={()=> { setPcRange('specific'); localStorage.setItem(`range:${id}:pc`, 'specific'); }}
-             unit={scopedParams.pc.unit}
-             unitOptions={["g","g/cm²"]}
-             setUnit={(u)=> setScoped('pc', { unit: u })}
-             avgOn={scopedParams.pc.avgOn}
-             setAvgOn={(v)=> setScoped('pc', { avgOn: v })}
-             trendOn={scopedParams.pc.trendOn}
-             setTrendOn={(v)=> setScoped('pc', { trendOn: v })}
-             trendSegPct={scopedParams.pc.trendSegPct}
-             setTrendSegPct={(n)=> setScoped('pc', { trendSegPct: n })}
-             deltaY={scopedParams.pc.deltaY}
-             setDeltaY={(n)=> setScoped('pc', { deltaY: n })}
-             low={scopedBounds.pc?.low ?? null}
-             high={scopedBounds.pc?.high ?? null}
-             setLow={(n)=> setBoundsFor(id || '', 'pc', { ...(scopedBounds.pc ?? { low: null, high: null }), low: n })}
-             setHigh={(n)=> setBoundsFor(id || '', 'pc', { ...(scopedBounds.pc ?? { low: null, high: null }), high: n })}
-             critOn={pcCritOn}
-             setCritOn={setPcCritOn}
-             critPct={pcCritPct}
-             setCritPct={setPcCritPct}
-             onClose={()=> setShowMenu(null)}
-           />
-         )}
-        {/* Row 2 right: Pouvoir couvrant - Essai */}
+        <ChartPanel
+          storageKey={`${id}:densite`} title="Densité" color="#60a5fa"
+          unitLabel={scopedParams.densite.unit} unitOptions={["kg/m³", "g/cm³", "g/mL", "kg/L", "g/L", "mg/mL"]}
+          setUnit={u => setScoped('densite', { unit: u })}
+          data={densPanelData} bounds={convBounds(scopedBounds.densite, densConv)}
+          setBoundsLow={n => setBoundsFor(id || '', 'densite', { ...scopedBounds.densite, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'densite', { ...scopedBounds.densite, high: n })}
+          avgOn={scopedParams.densite.avgOn} setAvgOn={v => setScoped('densite', { avgOn: v })}
+          trendOn={scopedParams.densite.trendOn} setTrendOn={v => setScoped('densite', { trendOn: v })}
+          trendSegPct={scopedParams.densite.trendSegPct} setTrendSegPct={n => setScoped('densite', { trendSegPct: n })}
+          deltaY={scopedParams.densite.deltaY} setDeltaY={n => setScoped('densite', { deltaY: n })}
+          trendWindowMs={scopedParams.densite.trendWindowMs}
+          critOn={densCritOn} setCritOn={setDensCritOn} critPct={densCritPct} setCritPct={setDensCritPct}
+          panZoom yDomainDefault={[1.2, 1.5]}
+          rangeKey={densRange} setRangeKey={setDensRange} {...specProps}
+        />
+        <ChartPanel
+          storageKey={`${id}:viscosite`} title="Viscosité" color="#34d399"
+          unitLabel={scopedParams.viscosite.unit} unitOptions={["Pa·s", "mPa·s", "cP", "P", "St", "cSt", "s"]}
+          setUnit={u => setScoped('viscosite', { unit: u })}
+          data={viscPanelData} bounds={convBounds(scopedBounds.viscosite, viscConv)}
+          setBoundsLow={n => setBoundsFor(id || '', 'viscosite', { ...scopedBounds.viscosite, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'viscosite', { ...scopedBounds.viscosite, high: n })}
+          avgOn={scopedParams.viscosite.avgOn} setAvgOn={v => setScoped('viscosite', { avgOn: v })}
+          trendOn={scopedParams.viscosite.trendOn} setTrendOn={v => setScoped('viscosite', { trendOn: v })}
+          trendSegPct={scopedParams.viscosite.trendSegPct} setTrendSegPct={n => setScoped('viscosite', { trendSegPct: n })}
+          deltaY={scopedParams.viscosite.deltaY} setDeltaY={n => setScoped('viscosite', { deltaY: n })}
+          trendWindowMs={scopedParams.viscosite.trendWindowMs}
+          critOn={viscCritOn} setCritOn={setViscCritOn} critPct={viscCritPct} setCritPct={setViscCritPct}
+          panZoom yDomainDefault={[250, 700]}
+          rangeKey={viscRange} setRangeKey={setViscRange} {...specProps}
+        />
+      </div>
+
+      {/* cover power history chart + the live test panel */}
+      <div className="section" style={{ marginTop: 12 }}>
+        <ChartPanel
+          storageKey={`${id}:pc`} title="Pouvoir couvrant - Historique" color="#38bdf8"
+          unitLabel={scopedParams.pc.unit} unitOptions={["g", "g/cm²"]}
+          setUnit={u => setScoped('pc', { unit: u })}
+          data={pcPanelData} bounds={convBounds(scopedBounds.pc ?? { low: null, high: null }, pcConv)}
+          setBoundsLow={n => setBoundsFor(id || '', 'pc', { ...(scopedBounds.pc ?? { low: null, high: null }), low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'pc', { ...(scopedBounds.pc ?? { low: null, high: null }), high: n })}
+          avgOn={scopedParams.pc.avgOn} setAvgOn={v => setScoped('pc', { avgOn: v })}
+          trendOn={scopedParams.pc.trendOn} setTrendOn={v => setScoped('pc', { trendOn: v })}
+          trendSegPct={scopedParams.pc.trendSegPct} setTrendSegPct={n => setScoped('pc', { trendSegPct: n })}
+          deltaY={scopedParams.pc.deltaY} setDeltaY={n => setScoped('pc', { deltaY: n })}
+          trendWindowMs={scopedParams.pc.trendWindowMs}
+          critOn={pcCritOn} setCritOn={setPcCritOn} critPct={pcCritPct} setCritPct={setPcCritPct}
+          rangeKey={pcRange} setRangeKey={setPcRange} {...specProps}
+        />
+        {/* the panel where u actually run a cover power test */}
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Pouvoir couvrant - Essai (g)</h3>
@@ -820,48 +329,37 @@ export default function Detail() {
                   setCheckingBalance(true);
                   setTimeout(() => {
                     setCheckingBalance(false);
-              // Phases: calib 5s, trempe 10s, mesure 120s
-              const tCalib = 5000; const tTrempe = 10000; const tMesure = 120000; const totalDurationMs = tCalib + tTrempe + tMesure;
-              setTestState('calib');
-              setRemaining(Math.ceil(totalDurationMs / 1000));
-              setMassSeries(null);
-              const startedAt = Date.now();
-              let localSeries: { t: number; v: number }[] = [];
-              const interval = setInterval(() => {
-                const elapsed = Date.now() - startedAt;
-                const left = Math.max(0, Math.ceil((totalDurationMs - elapsed) / 1000));
-                setRemaining(left);
-                if (elapsed < tCalib) {
-                  setTestState('calib');
-                } else if (elapsed < tCalib + tTrempe) {
-                  setTestState('trempe');
-                } else if (elapsed < totalDurationMs) {
-                  setTestState('mesure');
-                  const t = startedAt + elapsed;
-                  const tSec = (elapsed - (tCalib + tTrempe)) / 1000;
-                  const m0 = 120; const tau = 45;
-                  const value = Math.max(0, m0 * Math.exp(-tSec / tau) + (Math.random() * 2 - 1) * 0.6);
-                  localSeries.push({ t, v: Number(value.toFixed(2)) });
-                  if (localSeries.length % 3 === 0) setMassSeries([...localSeries]);
-                }
-                if (elapsed >= totalDurationMs) {
-                  clearInterval(interval);
-                  setTestState('termine');
-                  setMassSeries([...localSeries]);
-                  if (localSeries.length) {
-                    const last = localSeries[localSeries.length - 1].v;
-                    addCoverPowerResult(last);
-                    setLastPlaqueSrc(`${ASSET_BASE}/plaque-pickup.jpg`);
-                  }
-                }
-              }, 500);
+                    // timing for each phase: 5s calibrate, 10s dip, 120s measure
+                    const tCalib = 5000; const tTrempe = 10000; const tMesure = 120000;
+                    const totalMs = tCalib + tTrempe + tMesure;
+                    setTestState('calib'); setRemaining(Math.ceil(totalMs / 1000)); setMassSeries(null);
+                    const startedAt = Date.now();
+                    let localSeries: { t: number; v: number }[] = [];
+                    const interval = setInterval(() => {
+                      const elapsed = Date.now() - startedAt;
+                      setRemaining(Math.max(0, Math.ceil((totalMs - elapsed) / 1000)));
+                      if (elapsed < tCalib) setTestState('calib');
+                      else if (elapsed < tCalib + tTrempe) setTestState('trempe');
+                      else if (elapsed < totalMs) {
+                        setTestState('mesure');
+                        const tSec = (elapsed - (tCalib + tTrempe)) / 1000;
+                        // fake weight data - exponential decay with some noise to look realistic
+                        const value = Math.max(0, 120 * Math.exp(-tSec / 45) + (Math.random() * 2 - 1) * 0.6);
+                        localSeries.push({ t: startedAt + elapsed, v: Number(value.toFixed(2)) });
+                        if (localSeries.length % 3 === 0) setMassSeries([...localSeries]);
+                      }
+                      if (elapsed >= totalMs) {
+                        clearInterval(interval); setTestState('termine'); setMassSeries([...localSeries]);
+                        if (localSeries.length) { addCoverPowerResult(localSeries[localSeries.length - 1].v); setLastPlaqueSrc(`${ASSET_BASE}/plaque-pickup.jpg`); }
+                      }
+                    }, 500);
                   }, 2000);
                 }}>
                   {checkingBalance ? 'Vérification balance…' : 'Lancer essai'}
                 </button>
               ) : (
                 <span className="seg-btn" style={{ cursor: 'default', height: 29, display: 'inline-flex', alignItems: 'center' }}>
-                  {testState === 'calib' ? `Calibration balance - ${remaining}s` : testState === 'trempe' ? `Trempé 10s - ${remaining}s` : testState === 'mesure' ? `Mesure en cours - ${remaining}s` : ''}
+                  {testState === 'calib' ? `Calibration - ${remaining}s` : testState === 'trempe' ? `Trempé - ${remaining}s` : `Mesure - ${remaining}s`}
                 </span>
               )}
             </div>
@@ -869,500 +367,171 @@ export default function Detail() {
           <div className="chart">
             <ResponsiveContainer>
               <LineChart data={(() => {
-                const arr = (massSeries ?? []).map(p => ({ time: p.t, value: Number(p.v.toFixed(2)) }));
-                const avg = arr.length ? Number((arr.reduce((s,d)=>s+d.value,0)/arr.length).toFixed(2)) : null;
+                const arr = (massSeries ?? []).map(p => ({ time: p.t, value: p.v }));
+                const avg = arr.length ? Number((arr.reduce((s, d) => s + d.value, 0) / arr.length).toFixed(2)) : null;
                 return arr.map(d => ({ ...d, avg: avg ?? undefined }));
               })()} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-                <XAxis dataKey="time" type="number" scale="time" domain={["auto","auto"]} tickFormatter={formatTime} stroke="#6b7280" />
+                <XAxis dataKey="time" type="number" scale="time" domain={["auto", "auto"]} tickFormatter={formatTime} stroke="#6b7280" />
                 <YAxis stroke="#6b7280" />
                 <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('g', 'Masse')} />
                 <Line type="monotone" dataKey="value" name="Masse" stroke="#38bdf8" dot={false} strokeWidth={2} />
-                {(massSeries ?? []).length>0 && (
-                  <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />
-                )}
+                {(massSeries ?? []).length > 0 && <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />}
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
       </div>
+
+      {/* shows the plate photo and AI analysis after the test is done */}
       {testState === 'termine' && (
         <div className="section" style={{ marginTop: 12 }}>
-          {/* Row 3: photo + analyse, each same panel size */}
           <div className="panel">
             <h3>Photo de plaque</h3>
             <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 320, height: 320, cursor: 'zoom-in' }} onClick={()=> setImageModal('photo')}>
-                <picture>
-                  <source srcSet={(lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.webp`).replace('.jpg', '.webp')} type="image/webp" />
-                  <img src={lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.jpg`} alt="Plaque essai" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
-                </picture>
+              <div style={{ width: 320, height: 320, cursor: 'zoom-in' }} onClick={() => setImageModal('photo')}>
+                <img src={lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.jpg`} alt="Plaque essai" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
               </div>
             </div>
           </div>
           <div className="panel">
             <h3>Analyse IA</h3>
             <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 320, height: 320, cursor: 'zoom-in', position: 'relative' }} onClick={()=> setImageModal('ai')}>
-                <picture>
-                  <source srcSet={`${ASSET_BASE}/plaque-pickup_analysed.webp`} type="image/webp" />
-                  <img src={`${ASSET_BASE}/plaque-pickup_analysed.webp`} alt="Plaque analysée" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
-                </picture>
-                <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(16,22,83,0.9)', color: '#e5e7eb', padding: '6px 8px', borderRadius: 6, fontSize: 12, lineHeight: 1.2 }}>
-                  <div><strong>Count :</strong> 209</div>
-                  <div><strong>Avg diameter :</strong> 1.2 mm</div>
-                </div>
-                <div style={{ position: 'absolute', bottom: 8, right: 8, color: '#e5e7eb', textAlign: 'center' }}>
-                  <div style={{ width: 64, height: 6, background: '#ffffff', borderRadius: 3, marginLeft: 'auto' }} />
-                  <div style={{ fontSize: 12, marginTop: 4 }}>0.8 cm</div>
-                </div>
+              <div style={{ width: 320, height: 320, cursor: 'zoom-in' }} onClick={() => setImageModal('ai')}>
+                <img src={`${ASSET_BASE}/plaque-pickup_analysed.webp`} alt="Plaque analysée" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
               </div>
             </div>
           </div>
         </div>
       )}
-      {/* Image overlay modal for quick view with click-outside to close */}
       {imageModal && (
         <div className="modal-backdrop" onClick={() => setImageModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ width: '70vw', height: '70vh', maxWidth: '1400px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ width: '70vw', height: '70vh', maxWidth: 1400, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <div className="modal-header">
               <h3 style={{ margin: 0 }}>{imageModal === 'photo' ? 'Photo de plaque' : 'Analyse IA'}</h3>
-              <div className="row" style={{ gap: 8 }}>
-                <button onClick={() => setImageModal(null)}>Fermer</button>
-              </div>
+              <button onClick={() => setImageModal(null)}>Fermer</button>
             </div>
             {imageModal === 'photo' ? (
               <div className="modal-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
-                <img
-                  src={lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.jpg`}
-                  alt="Plaque essai"
-                  style={{ width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', borderRadius: 8, border: '1px solid var(--border)', display: 'block', objectFit: 'contain' }}
-                />
+                <img src={lastPlaqueSrc || `${ASSET_BASE}/plaque-pickup.jpg`} alt="Plaque" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} />
               </div>
             ) : (
-              <div className="modal-body" style={{ flex: 1, overflow: 'auto' }}>
-                <AiAnalysis />
-            </div>
+              <div className="modal-body" style={{ flex: 1, overflow: 'auto' }}><AiAnalysis /></div>
             )}
           </div>
         </div>
       )}
 
-
-      {/* Row 4: Température (left) and pH (right) */}
+      {/* temperature + pH charts */}
       <div className="section" style={{ marginTop: 12 }}>
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Température (°C)</h3>
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                  <button key={r} className={`seg-btn ${tempRange===r?'active':''}`} onClick={() => { setTempRange(r); localStorage.setItem(`range:${id}:temperature`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-                <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('temp')}>…</button>
-              </div>
-            </div>
-          </div>
-          {showMenu==='temp' && (
-            <ParamsModal
-              title="Paramètres Température"
-              specificStart={specificStart}
-              specificEnd={specificEnd}
-              setSpecificStart={setSpecificStart}
-              setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> { setTempRange('specific'); localStorage.setItem(`range:${id}:temperature`, 'specific'); }}
-              unit={scopedParams.temperature.unit}
-              unitOptions={["°C","°F","K"]}
-              setUnit={(u)=> setScoped('temperature', { unit: u })}
-              avgOn={scopedParams.temperature.avgOn}
-              setAvgOn={(v)=> setScoped('temperature', { avgOn: v })}
-              trendOn={scopedParams.temperature.trendOn}
-              setTrendOn={(v)=> setScoped('temperature', { trendOn: v })}
-              trendSegPct={scopedParams.temperature.trendSegPct}
-              setTrendSegPct={(n)=> setScoped('temperature', { trendSegPct: n })}
-              deltaY={scopedParams.temperature.deltaY}
-              setDeltaY={(n)=> setScoped('temperature', { deltaY: n })}
-              low={scopedBounds.temperature.low}
-              high={scopedBounds.temperature.high}
-              setLow={(n)=> setBoundsFor(id || '', 'temperature', { ...scopedBounds.temperature, low: n })}
-              setHigh={(n)=> setBoundsFor(id || '', 'temperature', { ...scopedBounds.temperature, high: n })}
-              critOn={tempCritOn}
-              setCritOn={setTempCritOn}
-              critPct={tempCritPct}
-              setCritPct={setTempCritPct}
-              onClose={()=> setShowMenu(null)}
-            />
-          )}
-          <div className="chart">
-            <div
-              className="pan-layer"
-              onMouseDown={(e) => {
-                const lastT = tempData[tempData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: tempAnchor ?? lastT, startYMin: tempY[0], startYMax: tempY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onMouseMove={(e) => {
-                if (!dragRef.current) return;
-                const dx = e.clientX - dragRef.current.startX;
-                const dy = e.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[tempRange] || 3600e3;
-                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
-                  setTempAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / (e.currentTarget.clientHeight || 1);
-                  setTempY([Number((min0+dy*perPx).toFixed(2)), Number((max0+dy*perPx).toFixed(2))]);
-                }
-              }}
-              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onWheel={(e) => {
-                const factor = e.deltaY > 0 ? 1.15 : 0.87;
-                const [min0, max0] = tempY;
-                const mid = (min0 + max0) / 2;
-                const halfRange = ((max0 - min0) / 2) * factor;
-                setTempY([Number((mid - halfRange).toFixed(2)), Number((mid + halfRange).toFixed(2))]);
-                e.preventDefault();
-              }}
-              onTouchStart={(e) => {
-                const t = e.touches[0];
-                const lastT = tempData[tempData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: t.clientX, startY: t.clientY, startAnchor: tempAnchor ?? lastT, startYMin: tempY[0], startYMax: tempY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onTouchMove={(e) => {
-                if (!dragRef.current) return;
-                const t = e.touches[0];
-                const dx = t.clientX - dragRef.current.startX;
-                const dy = t.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[tempRange] || 3600e3;
-                  const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
-                  setTempAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / ((e.currentTarget as HTMLDivElement).clientHeight || 1);
-                  setTempY([Number((min0+dy*perPx).toFixed(2)), Number((max0+dy*perPx).toFixed(2))]);
-                }
-              }}
-              onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-            />
-            <MetricPanel
-              title="Température"
-              unitLabel={scopedParams.temperature.unit}
-              data={tempPanelData}
-              yDomain={tempYConv as any}
-              avgOn={scopedParams.temperature.avgOn}
-              trendOn={scopedParams.temperature.trendOn}
-              trendSegPct={scopedParams.temperature.trendSegPct}
-              deltaY={scopedParams.temperature.deltaY}
-              bounds={tempPanelData.length ? (tempBoundsConv as any) : undefined}
-              critPct={tempCritOn ? tempCritPct : undefined}
-              color="#f59e0b"
-              trendWindowMs={scopedParams.temperature.trendWindowMs}
-              rangeKey={tempRange}
-            />
-          </div>
-        </div>
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>pH</h3>
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <div className="segmented">
-                {ALL_RANGES.map(r => (
-                  <button key={r} className={`seg-btn ${phRange===r?'active':''}`} onClick={() => { setPhRange(r); localStorage.setItem(`range:${id}:ph`, r); }}>{RANGE_LABELS[r]}</button>
-                ))}
-                <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('ph')}>…</button>
-              </div>
-            </div>
-          </div>
-          {showMenu==='ph' && (
-            <ParamsModal
-              title="Paramètres pH"
-              specificStart={specificStart}
-              specificEnd={specificEnd}
-              setSpecificStart={setSpecificStart}
-              setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> { setPhRange('specific'); localStorage.setItem(`range:${id}:ph`, 'specific'); }}
-              unit={scopedParams.ph.unit}
-              unitOptions={["(-)"]}
-              setUnit={(u)=> setScoped('ph', { unit: u })}
-              avgOn={scopedParams.ph.avgOn}
-              setAvgOn={(v)=> setScoped('ph', { avgOn: v })}
-              trendOn={scopedParams.ph.trendOn}
-              setTrendOn={(v)=> setScoped('ph', { trendOn: v })}
-              trendSegPct={scopedParams.ph.trendSegPct}
-              setTrendSegPct={(n)=> setScoped('ph', { trendSegPct: n })}
-              deltaY={scopedParams.ph.deltaY}
-              setDeltaY={(n)=> setScoped('ph', { deltaY: n })}
-              low={scopedBounds.ph.low}
-              high={scopedBounds.ph.high}
-              setLow={(n)=> setBoundsFor(id || '', 'ph', { ...scopedBounds.ph, low: n })}
-              setHigh={(n)=> setBoundsFor(id || '', 'ph', { ...scopedBounds.ph, high: n })}
-              critOn={phCritOn}
-              setCritOn={setPhCritOn}
-              critPct={phCritPct}
-              setCritPct={setPhCritPct}
-              onClose={()=> setShowMenu(null)}
-            />
-          )}
-          <div className="chart">
-            <div
-              className="pan-layer"
-              onMouseDown={(e) => {
-                const lastT = phData[phData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: e.clientX, startY: e.clientY, startAnchor: phAnchor ?? lastT, startYMin: phY[0], startYMax: phY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onMouseMove={(e) => {
-                if (!dragRef.current) return;
-                const dx = e.clientX - dragRef.current.startX;
-                const dy = e.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[phRange] || 3600e3;
-                  const scale = windowMs / (e.currentTarget.clientWidth || 1);
-                  setPhAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / (e.currentTarget.clientHeight || 1);
-                  setPhY([Number((min0+dy*perPx).toFixed(2)), Number((max0+dy*perPx).toFixed(2))]);
-                }
-              }}
-              onMouseUp={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onMouseLeave={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-              onWheel={(e) => {
-                const factor = e.deltaY > 0 ? 1.15 : 0.87;
-                const [min0, max0] = phY;
-                const mid = (min0 + max0) / 2;
-                const halfRange = ((max0 - min0) / 2) * factor;
-                setPhY([Number((mid - halfRange).toFixed(2)), Number((mid + halfRange).toFixed(2))]);
-                e.preventDefault();
-              }}
-              onTouchStart={(e) => {
-                const t = e.touches[0];
-                const lastT = phData[phData.length-1]?.time ?? Date.now();
-                dragRef.current = { startX: t.clientX, startY: t.clientY, startAnchor: phAnchor ?? lastT, startYMin: phY[0], startYMax: phY[1], mode: null };
-                (e.currentTarget as HTMLDivElement).classList.add('dragging');
-              }}
-              onTouchMove={(e) => {
-                if (!dragRef.current) return;
-                const t = e.touches[0];
-                const dx = t.clientX - dragRef.current.startX;
-                const dy = t.clientY - dragRef.current.startY;
-                if (!dragRef.current.mode) dragRef.current.mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                if (dragRef.current.mode === 'x') {
-                  const windowMs = RANGE_MS[phRange] || 3600e3;
-                  const scale = windowMs / ((e.currentTarget as HTMLDivElement).clientWidth || 1);
-                  setPhAnchor(dragRef.current.startAnchor + dx * scale);
-                } else {
-                  const [min0,max0]=[dragRef.current.startYMin, dragRef.current.startYMax];
-                  const range = max0 - min0;
-                  const perPx = range / ((e.currentTarget as HTMLDivElement).clientHeight || 1);
-                  setPhY([Number((min0+dy*perPx).toFixed(2)), Number((max0+dy*perPx).toFixed(2))]);
-                }
-              }}
-              onTouchEnd={(e)=>{ dragRef.current=null; (e.currentTarget as HTMLDivElement).classList.remove('dragging'); }}
-            />
-            <MetricPanel
-              title="pH"
-              unitLabel={scopedParams.ph.unit}
-              data={phSeries.map(d=>({ t: d.time, v: d.value, avg: d.avg }))}
-              yDomain={phY as any}
-              avgOn={scopedParams.ph.avgOn}
-              trendOn={scopedParams.ph.trendOn}
-              trendSegPct={scopedParams.ph.trendSegPct}
-              deltaY={scopedParams.ph.deltaY}
-              bounds={(phSeries.length ? { low: scopedBounds.ph.low, high: scopedBounds.ph.high } : undefined) as any}
-              critPct={phCritOn ? phCritPct : undefined}
-              color="#8b5cf6"
-              trendWindowMs={scopedParams.ph.trendWindowMs}
-              rangeKey={phRange}
-            />
-          </div>
-        </div>
+        <ChartPanel
+          storageKey={`${id}:temperature`} title="Température" color="#f59e0b"
+          unitLabel={scopedParams.temperature.unit} unitOptions={["°C", "°F", "K"]}
+          setUnit={u => setScoped('temperature', { unit: u })}
+          data={tempPanelData} bounds={convBounds(scopedBounds.temperature, tempConv)}
+          setBoundsLow={n => setBoundsFor(id || '', 'temperature', { ...scopedBounds.temperature, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'temperature', { ...scopedBounds.temperature, high: n })}
+          avgOn={scopedParams.temperature.avgOn} setAvgOn={v => setScoped('temperature', { avgOn: v })}
+          trendOn={scopedParams.temperature.trendOn} setTrendOn={v => setScoped('temperature', { trendOn: v })}
+          trendSegPct={scopedParams.temperature.trendSegPct} setTrendSegPct={n => setScoped('temperature', { trendSegPct: n })}
+          deltaY={scopedParams.temperature.deltaY} setDeltaY={n => setScoped('temperature', { deltaY: n })}
+          trendWindowMs={scopedParams.temperature.trendWindowMs}
+          critOn={tempCritOn} setCritOn={setTempCritOn} critPct={tempCritPct} setCritPct={setTempCritPct}
+          panZoom yDomainDefault={[15, 35]}
+          rangeKey={tempRange} setRangeKey={setTempRange} {...specProps}
+        />
+        <ChartPanel
+          storageKey={`${id}:ph`} title="pH" color="#8b5cf6"
+          unitLabel={scopedParams.ph.unit} unitOptions={["(-)"]}
+          setUnit={u => setScoped('ph', { unit: u })}
+          data={phPanelData} bounds={{ low: scopedBounds.ph.low, high: scopedBounds.ph.high }}
+          setBoundsLow={n => setBoundsFor(id || '', 'ph', { ...scopedBounds.ph, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'ph', { ...scopedBounds.ph, high: n })}
+          avgOn={scopedParams.ph.avgOn} setAvgOn={v => setScoped('ph', { avgOn: v })}
+          trendOn={scopedParams.ph.trendOn} setTrendOn={v => setScoped('ph', { trendOn: v })}
+          trendSegPct={scopedParams.ph.trendSegPct} setTrendSegPct={n => setScoped('ph', { trendSegPct: n })}
+          deltaY={scopedParams.ph.deltaY} setDeltaY={n => setScoped('ph', { deltaY: n })}
+          trendWindowMs={scopedParams.ph.trendWindowMs}
+          critOn={phCritOn} setCritOn={setPhCritOn} critPct={phCritPct} setCritPct={setPhCritPct}
+          panZoom yDomainDefault={[6.5, 9.8]}
+          rangeKey={phRange} setRangeKey={setPhRange} {...specProps}
+        />
       </div>
-      {/* Row 5: H2O dosage history and control */}
+
+      {/* water flow history + pump control panel */}
       <div className="section" style={{ marginTop: 12 }}>
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3>Débit H₂O — Historique (L/h)</h3>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                <button key={r} className={`seg-btn ${h2oRange===r?'active':''}`} onClick={() => { setH2oRange(r); localStorage.setItem(`range:${id}:h2o`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-              <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('h2o')}>…</button>
-            </div>
-          </div>
-          <div className="chart">
-            <ResponsiveContainer>
-              <MetricPanel
-                title="Débit H₂O"
-              unitLabel={scopedParams.h2o.unit}
-                data={h2oPanelData}
-                yDomain={h2oYConv as any}
-                avgOn={isOnline ? scopedParams.h2o.avgOn : false}
-                trendOn={isOnline ? scopedParams.h2o.trendOn : false}
-                trendSegPct={scopedParams.h2o.trendSegPct}
-                deltaY={scopedParams.h2o.deltaY}
-                bounds={isOnline && h2oPanelData.length ? (h2oBoundsConv as any) : undefined}
-                critPct={isOnline && h2oCritOn ? h2oCritPct : undefined}
-                color="#3b82f6"
-                trendWindowMs={scopedParams.h2o.trendWindowMs}
-                rangeKey={h2oRange}
-              />
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <ChartPanel
+          storageKey={`${id}:h2o`} title="Débit H₂O — Historique" color="#3b82f6"
+          unitLabel={scopedParams.h2o.unit} unitOptions={["L/h", "L/day", "mL/min", "mL/s"]}
+          setUnit={u => setScoped('h2o', { unit: u })}
+          data={h2oPanelData} bounds={convBounds(scopedBounds.h2o, h2oConv)}
+          setBoundsLow={n => setBoundsFor(id || '', 'h2o', { ...scopedBounds.h2o, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'h2o', { ...scopedBounds.h2o, high: n })}
+          avgOn={scopedParams.h2o.avgOn} setAvgOn={v => setScoped('h2o', { avgOn: v })}
+          trendOn={scopedParams.h2o.trendOn} setTrendOn={v => setScoped('h2o', { trendOn: v })}
+          trendSegPct={scopedParams.h2o.trendSegPct} setTrendSegPct={n => setScoped('h2o', { trendSegPct: n })}
+          deltaY={scopedParams.h2o.deltaY} setDeltaY={n => setScoped('h2o', { deltaY: n })}
+          trendWindowMs={scopedParams.h2o.trendWindowMs}
+          critOn={h2oCritOn} setCritOn={setH2oCritOn} critPct={h2oCritPct} setCritPct={setH2oCritPct}
+          rangeKey={h2oRange} setRangeKey={setH2oRange} {...specProps}
+        />
         <div className="panel">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Contrôle doseuse H₂O</h3>
             <span className={`badge ${pumpConnected ? 'ok' : 'err'}`}>{pumpConnected ? 'Connectée' : 'Non connectée'}</span>
-            </div>
+          </div>
           <div className="chart" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ display: 'grid', gap: 12, minWidth: 420, textAlign: 'center' }}>
               <div className="row" style={{ justifyContent: 'space-around' }}>
                 <div>
                   <div className="muted">Débit actuel</div>
-                  <div style={{ fontSize: 18, fontWeight: 700 }}>{toUnit(doseRateLph, flowUnit).toFixed(3)} <span style={{ cursor: 'pointer' }} onClick={()=> setFlowUnit(u => u==='L/h'?'L/day':'L/h')}>{flowUnit}</span></div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{toUnit(doseRateLph, flowUnit).toFixed(3)} <span style={{ cursor: 'pointer' }} onClick={() => setFlowUnit(u => u === 'L/h' ? 'L/day' : 'L/h')}>{flowUnit}</span></div>
                 </div>
                 <div>
-                  <div className="muted">Débit proposé (calculé)</div>
-                  <div style={{ fontSize: 18, fontWeight: 700 }}>{toUnit(proposedFlowLph, flowUnit).toFixed(3)} <span style={{ cursor: 'pointer' }} onClick={()=> setFlowUnit(u => u==='L/h'?'L/day':'L/h')}>{flowUnit}</span></div>
+                  <div className="muted">Débit proposé</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{toUnit(proposedFlowLph, flowUnit).toFixed(3)} <span style={{ cursor: 'pointer' }} onClick={() => setFlowUnit(u => u === 'L/h' ? 'L/day' : 'L/h')}>{flowUnit}</span></div>
                 </div>
               </div>
               <div className="row" style={{ justifyContent: 'center', gap: 8, alignItems: 'center' }}>
                 <label>Commande manuelle</label>
-                <input style={{ width: 160 }} type="number" step="0.001" value={doseRateLph} onChange={(e)=> setDoseRateLph(Math.max(0, Number(e.target.value)))} />
+                <input style={{ width: 160 }} type="number" step="0.001" value={doseRateLph} onChange={e => setDoseRateLph(Math.max(0, Number(e.target.value)))} />
               </div>
-              {/* TODO: Remplacer par le statut et les commandes réels quand l'API de la doseuse sera disponible */}
             </div>
           </div>
         </div>
       </div>
-      {/* Row 6: Silice (%) and Grains (%) */}
+
+      {/* silica + grain charts */}
       <div className="section" style={{ marginTop: 12 }}>
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Silice (%)</h3>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                <button key={r} className={`seg-btn ${siliceRange===r?'active':''}`} onClick={() => { setSiliceRange(r); localStorage.setItem(`range:${id}:silice`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-              <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('silice')}>…</button>
-            </div>
-          </div>
-          {showMenu==='silice' && (
-            <ParamsModal
-              title="Paramètres Silice"
-              specificStart={specificStart}
-              specificEnd={specificEnd}
-              setSpecificStart={setSpecificStart}
-              setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> { setSiliceRange('specific'); localStorage.setItem(`range:${id}:silice`, 'specific'); }}
-              unit={scopedParams.silice.unit}
-              unitOptions={["%"]}
-              setUnit={(u)=> setParams('silice', { unit: u })}
-              avgOn={scopedParams.silice.avgOn}
-              setAvgOn={(v)=> setParams('silice', { avgOn: v })}
-              trendOn={scopedParams.silice.trendOn}
-              setTrendOn={(v)=> setParams('silice', { trendOn: v })}
-              deltaY={scopedParams.silice.deltaY}
-              setDeltaY={(n)=> setParams('silice', { deltaY: n })}
-              low={scopedBounds.silice.low}
-              high={scopedBounds.silice.high}
-              setLow={(n)=> setBoundsFor(id || '', 'silice', { ...scopedBounds.silice, low: n })}
-              setHigh={(n)=> setBoundsFor(id || '', 'silice', { ...scopedBounds.silice, high: n })}
-              critOn={siliceCritOn}
-              setCritOn={setSiliceCritOn}
-              critPct={siliceCritPct}
-              setCritPct={setSiliceCritPct}
-              onClose={()=> setShowMenu(null)}
-            />
-          )}
-          <div className="chart">
-            <ResponsiveContainer>
-              <MetricPanel
-                title="Silice"
-                unitLabel={scopedParams.silice.unit}
-                data={silicePanelData}
-                avgOn={scopedParams.silice.avgOn}
-                trendOn={scopedParams.silice.trendOn}
-                deltaY={scopedParams.silice.deltaY}
-                bounds={silicePanelData.length ? siliceBoundsConv : undefined}
-                critPct={siliceCritOn ? siliceCritPct : undefined}
-                color="#a78bfa"
-                trendWindowMs={scopedParams.silice.trendWindowMs}
-                rangeKey={siliceRange}
-              />
-            </ResponsiveContainer>
-          </div>
-        </div>
-        <div className="panel">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Grains (%)</h3>
-            <div className="segmented">
-              {ALL_RANGES.map(r => (
-                <button key={r} className={`seg-btn ${grainsRange===r?'active':''}`} onClick={() => { setGrainsRange(r); localStorage.setItem(`range:${id}:grains`, r); }}>{RANGE_LABELS[r]}</button>
-              ))}
-              <button className="seg-btn" title="Paramètres" onClick={() => setShowMenu('grains')}>…</button>
-            </div>
-          </div>
-          {showMenu==='grains' && (
-            <ParamsModal
-              title="Paramètres Grains"
-              specificStart={specificStart}
-              specificEnd={specificEnd}
-              setSpecificStart={setSpecificStart}
-              setSpecificEnd={setSpecificEnd}
-              onSetRangeSpecific={()=> { setGrainsRange('specific'); localStorage.setItem(`range:${id}:grains`, 'specific'); }}
-              unit={scopedParams.grains.unit}
-              unitOptions={["%"]}
-              setUnit={(u)=> setParams('grains', { unit: u })}
-              avgOn={scopedParams.grains.avgOn}
-              setAvgOn={(v)=> setParams('grains', { avgOn: v })}
-              trendOn={scopedParams.grains.trendOn}
-              setTrendOn={(v)=> setParams('grains', { trendOn: v })}
-              deltaY={scopedParams.grains.deltaY}
-              setDeltaY={(n)=> setParams('grains', { deltaY: n })}
-              low={scopedBounds.grains.low}
-              high={scopedBounds.grains.high}
-              setLow={(n)=> setBoundsFor(id || '', 'grains', { ...scopedBounds.grains, low: n })}
-              setHigh={(n)=> setBoundsFor(id || '', 'grains', { ...scopedBounds.grains, high: n })}
-              critOn={grainsCritOn}
-              setCritOn={setGrainsCritOn}
-              critPct={grainsCritPct}
-              setCritPct={setGrainsCritPct}
-              onClose={()=> setShowMenu(null)}
-            />
-          )}
-          <div className="chart">
-            <ResponsiveContainer>
-              <MetricPanel
-                title="Grains"
-                unitLabel={scopedParams.grains.unit}
-                data={grainsPanelData}
-                avgOn={scopedParams.grains.avgOn}
-                trendOn={scopedParams.grains.trendOn}
-                deltaY={scopedParams.grains.deltaY}
-                bounds={grainsPanelData.length ? grainsBoundsConv : undefined}
-                critPct={grainsCritOn ? grainsCritPct : undefined}
-                color="#60a5fa"
-                trendWindowMs={scopedParams.grains.trendWindowMs}
-                rangeKey={grainsRange}
-              />
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <ChartPanel
+          storageKey={`${id}:silice`} title="Silice" color="#a78bfa"
+          unitLabel={scopedParams.silice.unit} unitOptions={["%"]}
+          setUnit={u => setScoped('silice', { unit: u })}
+          data={silicePanelData} bounds={{ low: scopedBounds.silice?.low ?? null, high: scopedBounds.silice?.high ?? null }}
+          setBoundsLow={n => setBoundsFor(id || '', 'silice', { ...scopedBounds.silice, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'silice', { ...scopedBounds.silice, high: n })}
+          avgOn={scopedParams.silice.avgOn} setAvgOn={v => setScoped('silice', { avgOn: v })}
+          trendOn={scopedParams.silice.trendOn} setTrendOn={v => setScoped('silice', { trendOn: v })}
+          deltaY={scopedParams.silice.deltaY} setDeltaY={n => setScoped('silice', { deltaY: n })}
+          trendWindowMs={scopedParams.silice.trendWindowMs}
+          critOn={siliceCritOn} setCritOn={setSiliceCritOn} critPct={siliceCritPct} setCritPct={setSiliceCritPct}
+          rangeKey={siliceRange} setRangeKey={setSiliceRange} {...specProps}
+        />
+        <ChartPanel
+          storageKey={`${id}:grains`} title="Grains" color="#60a5fa"
+          unitLabel={scopedParams.grains.unit} unitOptions={["%"]}
+          setUnit={u => setScoped('grains', { unit: u })}
+          data={grainsPanelData} bounds={{ low: scopedBounds.grains?.low ?? null, high: scopedBounds.grains?.high ?? null }}
+          setBoundsLow={n => setBoundsFor(id || '', 'grains', { ...scopedBounds.grains, low: n })}
+          setBoundsHigh={n => setBoundsFor(id || '', 'grains', { ...scopedBounds.grains, high: n })}
+          avgOn={scopedParams.grains.avgOn} setAvgOn={v => setScoped('grains', { avgOn: v })}
+          trendOn={scopedParams.grains.trendOn} setTrendOn={v => setScoped('grains', { trendOn: v })}
+          deltaY={scopedParams.grains.deltaY} setDeltaY={n => setScoped('grains', { deltaY: n })}
+          trendWindowMs={scopedParams.grains.trendWindowMs}
+          critOn={grainsCritOn} setCritOn={setGrainsCritOn} critPct={grainsCritPct} setCritPct={setGrainsCritPct}
+          rangeKey={grainsRange} setRangeKey={setGrainsRange} {...specProps}
+        />
       </div>
     </div>
   );
 }
-
-

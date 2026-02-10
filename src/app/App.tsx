@@ -13,19 +13,20 @@ import Loading from '../pages/Loading';
 import '../app.css';
 import { useAuth } from '../features/auth/AuthContext';
 import { getUserPrefs, putUserPrefs, apiHealth, ASSET_BASE } from '../services/api';
-import { useAppState } from '../store/appState';
+import { useBarbotineStore } from '../store/barbotineStore';
+import { usePrefsStore } from '../store/prefsStore';
+import { DebuggerFab } from '../components/DebuggerFab';
+import { useTranslation } from '../i18n';
 
 export function App() {
+  const t = useTranslation();
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('theme') || 'light');
   const [userMenu, setUserMenu] = useState(false);
   const [showName, setShowName] = useState(false);
-  const [dbgOpen, setDbgOpen] = useState(false);
-  const [dbReachable, setDbReachable] = useState(true);
-  const [errors, setErrors] = useState<Array<{ ts:number; msg:string }>>([]);
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
-    // Apply accent color from localStorage on load
+    // grabs whatever accent color u picked last time (or defaults to navy)
     const accentColor = localStorage.getItem('accent-color') || '#0e224b';
     const ACCENT_COLORS = [
       { light: '#0e224b', dark: '#9db0df' },
@@ -34,34 +35,25 @@ export function App() {
       { light: '#7c3aed', dark: '#c4b5fd' },
       { light: '#ea580c', dark: '#fdba74' },
     ];
+    // finds the matching light/dark pair for the accent u chose
     const pair = ACCENT_COLORS.find(c => c.light === accentColor) || ACCENT_COLORS[0];
     document.documentElement.style.setProperty('--accent', pair.light);
     document.documentElement.style.setProperty('--accent-dark', pair.dark);
+    // clicking anywhere on the page closes the user dropdown menu
     const close = () => setUserMenu(false);
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
   }, [theme]);
-  useEffect(() => {
-    const onError = (e: ErrorEvent) => setErrors(prev => [{ ts: Date.now(), msg: String(e?.message || 'Error') }, ...prev].slice(0,50));
-    const onRej = (e: PromiseRejectionEvent) => setErrors(prev => [{ ts: Date.now(), msg: String((e?.reason && e.reason.message) || 'Promise rejection') }, ...prev].slice(0,50));
-    const onAppErr = (e: any) => setErrors(prev => [{ ts: Date.now(), msg: String(e?.detail?.message || 'App error') }, ...prev].slice(0,50));
-    window.addEventListener('error', onError);
-    window.addEventListener('unhandledrejection', onRej);
-    window.addEventListener('app-error', onAppErr as any);
-    const id = setInterval(async () => {
-      try { const ok = await apiHealth(); setDbReachable(ok); } catch { setDbReachable(false); }
-    }, 10000);
-    return () => { clearInterval(id); window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onRej); window.removeEventListener('app-error', onAppErr as any); };
-  }, []);
 
   const { ready, isAuthenticated, user, login, logout } = useAuth();
-  const { initialDataLoading } = useAppState();
+  const initialDataLoading = useBarbotineStore(s => s.initialDataLoading);
+  const refreshInterval = usePrefsStore(s => s.refreshInterval);
   const [loadingDone, setLoadingDone] = useState(false);
-  // Reset loading gate when auth state changes
+  // if u log out, reset the loading screen so it shows again next login
   useEffect(() => {
     if (!isAuthenticated) setLoadingDone(false);
   }, [isAuthenticated]);
-  // Load theme from backend prefs when authenticated
+  // pulls ur saved theme (light/dark) from the server once u log in
   useEffect(() => {
     (async () => {
       try {
@@ -74,7 +66,7 @@ export function App() {
       } catch { /* ignore */ }
     })();
   }, [isAuthenticated, user?.username]);
-  // Persist theme to backend
+  // saves ur theme choice to the server so it sticks across devices
   useEffect(() => {
     (async () => {
       try {
@@ -84,8 +76,7 @@ export function App() {
     })();
   }, [theme, isAuthenticated, user?.username]);
 
-  // Show loading page: 3s minimum, 7s (3+4) if server unreachable
-  // Once loading completes, set loadingDone to true
+  // shows the loading screen for at least 3s, up to 7s if server is being slow
   if (!ready) {
     return <Loading minMs={3000} serverTimeoutMs={7000} />;
   }
@@ -93,6 +84,7 @@ export function App() {
     return <Loading minMs={3000} serverTimeoutMs={7000} onReady={() => setLoadingDone(true)} />;
   }
 
+  // not logged in? u only get the login page and password reset, nothing else
   if (!isAuthenticated) {
     return (
       <div className="app">
@@ -106,6 +98,7 @@ export function App() {
     );
   }
 
+  // this is basically the skeleton of the whole app - sidebar, routes, everything
   return (
     <div className="app">
       <nav className="nav">
@@ -115,9 +108,9 @@ export function App() {
           </NavLink>
         </div>
         <div className="links" style={{ alignItems: 'center' }}>
-          <NavLink to="/" className={({ isActive }) => isActive ? 'active' : ''}>Accueil</NavLink>
+          <NavLink to="/" className={({ isActive }) => isActive ? 'active' : ''}>{t('nav.accueil')}</NavLink>
           <NavLink to="/moulage" className={({ isActive }) => isActive ? 'active' : ''}>Moulage</NavLink>
-          <NavLink to="/donnees" className={({ isActive }) => isActive ? 'active' : ''}>Données</NavLink>
+          <NavLink to="/donnees" className={({ isActive }) => isActive ? 'active' : ''}>{t('nav.donnees')}</NavLink>
           <button aria-label="Basculer thème" className="icon-btn" title={theme === 'light' ? 'Thème sombre' : 'Thème clair'} onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>
             {theme === 'light' ? (
               <img key="sun" className="icon-swap enter" src={`${ASSET_BASE}/sun.svg`} alt="sun" style={{ width: 18, height: 18 }} />
@@ -126,17 +119,19 @@ export function App() {
             )}
           </button>
           <div style={{ position: 'relative' }}>
+            {/* stopPropagation so the "click anywhere to close" thing doesnt immediately close it */}
             <button className="user-btn" onClick={(e) => { e.stopPropagation(); setUserMenu(m => !m); }}>
               {(() => {
+                // basically turns "first.last@company.com" into "First Last"
                 const email = user?.email || '';
                 const base = (email.split('@')[0] || '').replace(/[_-]/g, ' ').replace(/\./g, ' ').trim() || 'Utilisateur';
                 const parts = base.split(/\s+/).filter(Boolean);
                 const display = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : base;
-                // Two-letter initials: first letter of first name + first letter of last name
+                // grabs initials like "YK" from ur name for the lil avatar circle
                 const initials = parts.length >= 2
                   ? (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
                   : base.charAt(0).toUpperCase();
-                // TEMP: hardcode 'Editor' for youssef.karim — replace with server RBAC mapping
+                // TODO: this is a temp hack lol - hardcoded role for one user, needs real permissions from server
                 const roleLabel = (email.toLowerCase() === 'youssef.karim@safrangroup.com') ? 'Editor' : (user?.level === 3 ? 'Editor' : user?.level === 2 ? 'Read & Export' : 'Read-only');
                 return (
                   <>
@@ -151,10 +146,10 @@ export function App() {
             </button>
             {userMenu && (
               <div className="dropdown" onClick={e => e.stopPropagation()}>
-                <NavLink className="dropdown-item" to="/profile">Profil</NavLink>
-                <NavLink className="dropdown-item" to="/params">Paramètres</NavLink>
-                <NavLink className="dropdown-item" to="/support">Support</NavLink>
-                <button className="dropdown-item logout" onClick={() => { void logout(); }}>Déconnexion</button>
+                <NavLink className="dropdown-item" to="/profile">{t('nav.profile')}</NavLink>
+                <NavLink className="dropdown-item" to="/params">{t('nav.params')}</NavLink>
+                <NavLink className="dropdown-item" to="/support">{t('nav.support')}</NavLink>
+                <button className="dropdown-item logout" onClick={() => { void logout(); }}>{t('nav.logout')}</button>
               </div>
             )}
           </div>
@@ -173,42 +168,8 @@ export function App() {
           <Route path="/reset" element={<Reset />} />
         </Routes>
       </main>
-      {/* Global debugger widget - closes on outside click */}
-      {dbgOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 59 }} onClick={() => setDbgOpen(false)} />}
-      <div style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 60 }}>
-        {!dbgOpen ? (
-          <button
-            onClick={() => setDbgOpen(true)}
-            title="Debugger"
-            className="icon-btn"
-            style={{ width: 48, height: 48, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e5e7eb', background: 'var(--panel)' }}
-          >
-            <img src={`${ASSET_BASE}/bug.svg`} alt="bug" style={{ width: 22, height: 22, opacity: 0.6 }} />
-          </button>
-        ) : (
-          <div className="panel" style={{ width: 280, padding: 10, maxHeight: '60vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <strong>Debugger</strong>
-              <button className="icon-btn" onClick={() => setDbgOpen(false)} aria-label="Toggle debugger">–</button>
-            </div>
-            <div style={{ marginTop: 6, fontSize: 12 }}>
-              <div className="row" style={{ justifyContent: 'space-between' }}>
-                <span>Server</span>
-                <span className={`badge ${dbReachable ? 'ok' : 'err'}`}>{dbReachable ? 'OK' : 'DOWN'}</span>
-              </div>
-              <div className="row" style={{ justifyContent: 'space-between' }}>
-                <span>Errors</span>
-                <span>{errors.length}</span>
-              </div>
-              <div className="log" style={{ marginTop: 6 }}>
-                {errors.slice(0,5).map((e,i)=> (
-                  <div key={i} className="log-item">{new Date(e.ts).toLocaleTimeString()} — {e.msg}</div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* lil floating debug button, only shows up in dev basically */}
+      <DebuggerFab />
       <footer className="footer">
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ borderTop: '1px solid var(--border)', marginBottom: 8 }}></div>

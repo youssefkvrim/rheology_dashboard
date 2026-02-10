@@ -3,7 +3,7 @@ import { useI18n, Language, LANGUAGE_NAMES } from '../i18n';
 
 type NotifChannel = 'email' | 'sms' | 'none';
 
-// Accent colors with light/dark variants (45° split circle: top=light, bottom=dark)
+// the color options u can pick from (each has a light + dark version)
 const ACCENT_COLORS = [
   { name: 'Bleu Safran', light: '#0e224b', dark: '#9db0df' },
   { name: 'Bleu Ciel', light: '#0ea5e9', dark: '#7dd3fc' },
@@ -12,43 +12,43 @@ const ACCENT_COLORS = [
   { name: 'Orange', light: '#ea580c', dark: '#fdba74' },
 ];
 
-// Notification types
-const NOTIF_TYPES = [
-  { key: 'density', label: 'Densité hors bornes' },
-  { key: 'viscosity', label: 'Viscosité hors bornes' },
-  { key: 'ph', label: 'pH hors bornes' },
-  { key: 'temperature', label: 'Température hors bornes' },
-  { key: 'tempRoom', label: 'Température salle' },
-  { key: 'humidity', label: 'Humidité salle' },
-  { key: 'system', label: 'Erreurs système' },
-];
-
+// the settings page where u can change theme, language, alerts etc
 export default function Params() {
   const { language, setLanguage, t, availableLanguages } = useI18n();
 
-  // Notification preferences
+  const NOTIF_TYPES = [
+    { key: 'density', label: t('alert.density') },
+    { key: 'viscosity', label: t('alert.viscosity') },
+    { key: 'ph', label: t('alert.ph') },
+    { key: 'temperature', label: t('alert.temperature') },
+    { key: 'tempRoom', label: t('alert.roomTemp') },
+    { key: 'humidity', label: t('alert.humidity') },
+    { key: 'system', label: t('alert.systemErrors') },
+  ];
+
+  // how u wanna get notifications (email, sms, or nah)
   const [notifChannel, setNotifChannel] = useState<NotifChannel>(() => {
     return (localStorage.getItem('notif-channel') as NotifChannel) || 'email';
   });
 
-  // Notification types enabled
+  // which alerts u actually care about
   const [notifTypes, setNotifTypes] = useState<Record<string, boolean>>(() => {
     try {
       return JSON.parse(localStorage.getItem('notif-types') || '{}');
     } catch { return {}; }
   });
 
-  // Accent color (store the light variant as key)
+  // the accent color for the whole app
   const [accentColor, setAccentColor] = useState<string>(() => {
     return localStorage.getItem('accent-color') || '#0e224b';
   });
 
-  // Refresh interval (seconds)
+  // how often the data refreshes (in seconds)
   const [refreshInterval, setRefreshInterval] = useState<number>(() => {
     return Number(localStorage.getItem('refresh-interval')) || 30;
   });
 
-  // Default chart settings for all slurries
+  // default chart display options (avg line, trend line, etc)
   const [defaultAvgOn, setDefaultAvgOn] = useState<boolean>(() => {
     return localStorage.getItem('default-avg-on') !== 'false';
   });
@@ -59,10 +59,10 @@ export default function Params() {
     return Number(localStorage.getItem('default-delta-y')) || 0;
   });
 
-  // Get current accent pair
+  // finds the color pair that matches what the user picked
   const currentAccent = ACCENT_COLORS.find(c => c.light === accentColor) || ACCENT_COLORS[0];
 
-  // Persist changes
+  // all these effects just save ur preferences to local storage whenever they change
   useEffect(() => {
     localStorage.setItem('notif-channel', notifChannel);
   }, [notifChannel]);
@@ -71,6 +71,7 @@ export default function Params() {
     localStorage.setItem('notif-types', JSON.stringify(notifTypes));
   }, [notifTypes]);
 
+  // also updates the css variables so the whole app changes color instantly
   useEffect(() => {
     localStorage.setItem('accent-color', accentColor);
     const pair = ACCENT_COLORS.find(c => c.light === accentColor);
@@ -79,8 +80,6 @@ export default function Params() {
       document.documentElement.style.setProperty('--accent-dark', pair.dark);
     }
   }, [accentColor]);
-
-  // Language is now handled by I18nContext
 
   useEffect(() => {
     localStorage.setItem('refresh-interval', String(refreshInterval));
@@ -106,14 +105,11 @@ export default function Params() {
     <div>
       <h2>{t('params.title')}</h2>
 
-      {/* Notifications */}
+      {/* how u wanna be notified about alerts */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>{t('params.notifications')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          {language === 'fr' ? 'Choisissez comment recevoir les alertes' :
-           language === 'en' ? 'Choose how to receive alerts' :
-           language === 'it' ? 'Scegli come ricevere gli avvisi' :
-           'Elija cómo recibir alertas'}
+          {t('params.howToReceiveAlerts')}
         </p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
           {(['email', 'sms', 'none'] as NotifChannel[]).map((ch) => (
@@ -126,14 +122,14 @@ export default function Params() {
                 border: '1px solid var(--border)',
               }}
             >
-              {ch === 'email' ? 'Email' : ch === 'sms' ? 'SMS' : 'Aucune'}
+              {ch === 'email' ? t('params.email') : ch === 'sms' ? t('params.sms') : t('params.none')}
             </button>
           ))}
         </div>
 
         {notifChannel !== 'none' && (
           <div style={{ marginTop: 16 }}>
-            <p className="muted" style={{ fontSize: 12 }}>Types d'alertes à recevoir :</p>
+            <p className="muted" style={{ fontSize: 12 }}>{t('params.notifTypes')}</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
               {NOTIF_TYPES.map(nt => (
                 <label key={nt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -150,11 +146,11 @@ export default function Params() {
         )}
       </div>
 
-      {/* Accent color */}
+      {/* pick ur fav color for the app theme */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Couleur d'accent</h3>
+        <h3>{t('params.accentColor')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          Personnalisez la couleur principale.
+          {t('params.accentColorDesc')}
         </p>
         <div style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'center' }}>
           {ACCENT_COLORS.map((c) => (
@@ -177,14 +173,11 @@ export default function Params() {
         </div>
       </div>
 
-      {/* Language */}
+      {/* language picker */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>{t('params.language')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          {language === 'fr' ? 'Choisissez votre langue préférée.' : 
-           language === 'en' ? 'Choose your preferred language.' :
-           language === 'it' ? 'Scegli la tua lingua preferita.' :
-           'Elija su idioma preferido.'}
+          {t('params.chooseLanguage')}
         </p>
         <select
           value={language}
@@ -197,10 +190,10 @@ export default function Params() {
         </select>
       </div>
 
-      {/* Refresh interval */}
+      {/* how often data auto-refreshes */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Rafraîchissement</h3>
-        <p className="muted" style={{ fontSize: 12 }}>Intervalle de mise à jour automatique des données (en secondes)</p>
+        <h3>{t('params.refreshInterval')}</h3>
+        <p className="muted" style={{ fontSize: 12 }}>{t('params.refreshDesc')}</p>
         <div className="row" style={{ gap: 8, marginTop: 8 }}>
           <input
             type="number"
@@ -210,15 +203,15 @@ export default function Params() {
             onChange={(e) => setRefreshInterval(Math.max(5, Math.min(300, Number(e.target.value))))}
             style={{ width: 80 }}
           />
-          <span className="muted">secondes</span>
+          <span className="muted">{t('params.seconds')}</span>
         </div>
       </div>
 
-      {/* Default chart settings */}
+      {/* default chart look (avg line, trend, etc) */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Paramètres graphiques par défaut</h3>
+        <h3>{t('params.defaultChartParams')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          Ces paramètres s'appliquent à tous les graphiques par défaut. Peut être surchargé par barbotine.
+          {t('params.chartDefaultsDesc')}
         </p>
         <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -227,7 +220,7 @@ export default function Params() {
               checked={defaultAvgOn}
               onChange={(e) => setDefaultAvgOn(e.target.checked)}
             />
-            Afficher la moyenne
+            {t('params.showAverage')}
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
@@ -235,10 +228,10 @@ export default function Params() {
               checked={defaultTrendOn}
               onChange={(e) => setDefaultTrendOn(e.target.checked)}
             />
-            Afficher la tendance
+            {t('params.showTrend')}
           </label>
           <div>
-            <label>ΔY (incertitude)</label>
+            <label>{t('params.uncertainty')}</label>
             <input
               type="number"
               min={0}
@@ -251,17 +244,18 @@ export default function Params() {
         </div>
       </div>
 
-      {/* Reset all */}
+      {/* nuke everything and start fresh */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Réinitialiser</h3>
+        <h3>{t('params.resetAll')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          Supprime toutes les préférences locales (paramètres graphiques, bornes, unités).
+          {t('params.resetDesc')}
         </p>
         <button
           style={{ marginTop: 8, background: '#ef4444', borderColor: '#dc2626' }}
           onClick={() => {
-            if (!confirm('Supprimer tous les paramètres ? Cette action est irréversible.')) return;
+            if (!confirm(t('params.resetConfirm'))) return;
           try {
+            // wipes all saved prefs from local storage then reloads the page
             const userId = sessionStorage.getItem('userId') || 'anonymous';
             localStorage.removeItem(`chartParams:${userId}`);
             localStorage.removeItem(`chartParamsById:${userId}`);
@@ -280,7 +274,7 @@ export default function Params() {
           }
           }}
         >
-          Supprimer tous les paramètres
+          {t('params.resetButton')}
         </button>
       </div>
     </div>

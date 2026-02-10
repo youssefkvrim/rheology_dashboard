@@ -1,48 +1,51 @@
-/* Minimal read-only backend for SQL Server to serve rheology endpoints (CommonJS) */
+// the backend brain - talks to SQL Server and handles all the data stuff
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const sql = require('mssql');
 const dotenv = require('dotenv');
+const jwt = require('jsonwebtoken');
+const argon2 = require('argon2');
+const { z } = require('zod');
 
-// Load secrets from vault (not tracked by git)
+// grabs secret keys from a hidden vault file that git doesn't know about
 dotenv.config({ path: path.resolve(process.cwd(), 'vault/secrets.env') });
 
 const app = express();
+// lets any frontend talk to us and caps how much data u can send
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.text({ type: ['text/*', 'application/csv', 'text/csv'], limit: '10mb' }));
 
 const PORT = Number(process.env.BACKEND_PORT || 3001);
+const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+const JWT_EXPIRY = '8h';
 
-const poolConfig = {
-  server: process.env.MSSQL_SERVER, // e.g., Y005N8C.rd1.rf1
-  database: process.env.MSSQL_DATABASE, // e.g., PFX_MOULAGE_prod (was: PFX_suivi_barbotine)
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  port: Number(process.env.MSSQL_PORT || 1433),
-  options: {
-    encrypt: String(process.env.MSSQL_ENCRYPT || 'true') === 'true',
-    trustServerCertificate: String(process.env.MSSQL_TRUST_CERT || 'true') === 'true',
-    instanceName: process.env.MSSQL_INSTANCE, // e.g., DATATECH_PFX
-  },
-  pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
-  connectionTimeout: 15000,
-  requestTimeout: 30000,
-};
+// ──────────── helpful lil utility functions ────────────
 
-let poolPromise;
-function getPool() {
-  if (!poolPromise) {
-    poolPromise = sql.connect(poolConfig).catch((err) => {
-      poolPromise = undefined;
-      throw err;
-    });
-  }
-  return poolPromise;
+// takes messy parameter names from the DB and makes them consistent
+function toNormKey(raw) {
+  const u = String(raw || '').trim().toUpperCase();
+  if (u === 'PH') return 'pH';
+  if (u === 'H2O') return 'H2O';
+  if (u === 'PC') return 'pc';
+  if (u === 'DENSITY') return 'density';
+  if (u === 'VISCOSITY') return 'viscosity';
+  if (u === 'TEMPERATURE') return 'temperature';
+  if (u === 'SILICE') return 'silice';
+  if (u === 'GRAIN' || u === 'GRAINS') return 'grain';
+  return String(raw || '').trim();
 }
 
+// flips DB keys into the french names the frontend expects
+function toFrontendKey(dbKey) {
+  const map = { density: 'densite', viscosity: 'viscosite', pH: 'ph', temperature: 'temperature', pc: 'pc', H2O: 'h2o', silice: 'silice', grain: 'grains' };
+  return map[dbKey] || String(dbKey).toLowerCase();
+}
+
+// turns any timestamp format into milliseconds so we can compare them easily
 function toMs(ts) {
   try {
     if (!ts) return NaN;
@@ -50,6 +53,7 @@ function toMs(ts) {
     let s = String(ts).trim();
     if (!s) return NaN;
     if (s.indexOf(' ') !== -1) s = s.replace(' ', 'T');
+    // these regexes fix weird timezone formats so Date.parse doesn't freak out
     const m = s.match(/([+-])(\d{2})(?!:)(?!\d)/);
     if (m) s = s + ':00';
     const m2 = s.match(/([+-])(\d{2})(\d{2})$/);
@@ -61,6 +65,228 @@ function toMs(ts) {
   }
 }
 
+// rips apart a CSV line properly - handles quotes and commas inside fields and all that mess
+function parseCsvLine(line) {
+  const fields = [];
+  let i = 0;
+  while (i <= line.length) {
+    if (i === line.length) { fields.push(''); break; }
+    if (line[i] === '"') {
+      // quoted field - gotta handle escaped quotes (double "") inside
+      let j = i + 1;
+      let val = '';
+      while (j < line.length) {
+        if (line[j] === '"') {
+          if (j + 1 < line.length && line[j + 1] === '"') { val += '"'; j += 2; }
+          else { j++; break; }
+        } else { val += line[j]; j++; }
+      }
+      fields.push(val);
+      if (j < line.length && line[j] === ',') j++;
+      i = j;
+    } else {
+      const next = line.indexOf(',', i);
+      if (next === -1) { fields.push(line.slice(i)); break; }
+      fields.push(line.slice(i, next));
+      i = next + 1;
+    }
+  }
+  return fields;
+}
+
+// ──────────── database connection w/ circuit breaker ────────────
+
+const poolConfig = {
+  server: process.env.MSSQL_SERVER,
+  database: process.env.MSSQL_DATABASE,
+  user: process.env.MSSQL_USER,
+  password: process.env.MSSQL_PASSWORD,
+  port: Number(process.env.MSSQL_PORT || 1433),
+  options: {
+    encrypt: String(process.env.MSSQL_ENCRYPT || 'true') === 'true',
+    trustServerCertificate: String(process.env.MSSQL_TRUST_CERT || 'true') === 'true',
+    instanceName: process.env.MSSQL_INSTANCE,
+  },
+  pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+  connectionTimeout: 15000,
+  requestTimeout: 30000,
+};
+
+let poolPromise;
+let poolRetryCount = 0;
+let poolLastFailure = 0;
+const POOL_MAX_RETRIES = 5;
+const POOL_CIRCUIT_OPEN_MS = 60000; // chill for 60s before trying the DB again
+
+function getPool() {
+  // circuit breaker - if the DB keeps failing we stop hammering it for a bit
+  if (poolRetryCount >= POOL_MAX_RETRIES) {
+    const elapsed = Date.now() - poolLastFailure;
+    if (elapsed < POOL_CIRCUIT_OPEN_MS) {
+      return Promise.reject(new Error(`Circuit breaker open: DB unavailable (retry in ${Math.ceil((POOL_CIRCUIT_OPEN_MS - elapsed) / 1000)}s)`));
+    }
+    // cooldown's over, let's try again
+    poolRetryCount = 0;
+  }
+
+  if (!poolPromise) {
+    // waits longer between each retry so we don't spam the DB (2s, 4s, 8s...)
+    const delay = poolRetryCount > 0 ? Math.min(Math.pow(2, poolRetryCount) * 1000, 32000) : 0;
+    const attempt = () => sql.connect(poolConfig).then(pool => {
+      poolRetryCount = 0; // we're in, reset the fail counter
+      return pool;
+    }).catch((err) => {
+      poolPromise = undefined;
+      poolRetryCount++;
+      poolLastFailure = Date.now();
+      throw err;
+    });
+    poolPromise = delay > 0 ? new Promise(resolve => setTimeout(resolve, delay)).then(attempt) : attempt();
+  }
+  return poolPromise;
+}
+
+// ──────────── user accounts (hardcoded for now) ────────────
+
+// these are the users - passwords get hashed when the server first boots up
+const USERS = [
+  { userId: 'youssef.karim', email: 'youssef.karim@safrangroup.com', role: 'admin', _plaintext: 'pfx', hash: null },
+  { userId: 'wala.gloulou', email: 'wala.gloulou@safrangroup.com', role: 'admin', _plaintext: 'safranpfx', hash: null },
+  { userId: 'benoit.marie', email: 'benoit.marie@safrangroup.com', role: 'admin', _plaintext: 'pfxpfxpfx', hash: null },
+  { userId: 'aliz.pinto-mora', email: 'aliz.pinto-mora@safrangroup.com', role: 'admin', _plaintext: 'pfxpfxpfx', hash: null },
+];
+
+// keeps track of password reset links so ppl can change their password
+const resetTokens = new Map();
+
+// hashes all the passwords the strong way so nobody can reverse them
+async function initUserHashes() {
+  for (const u of USERS) {
+    if (!u.hash) {
+      u.hash = await argon2.hash(u._plaintext, {
+        type: argon2.argon2id,
+        memoryCost: 65536,  // uses 64MB of RAM to make brute force basically impossible
+        timeCost: 3,
+        parallelism: 1,
+      });
+      // nuke the plaintext password from memory once it's hashed
+      delete u._plaintext;
+    }
+  }
+}
+
+// finds a user by their username or email, not case sensitive
+function findUser(identifier) {
+  const id = identifier.trim().toLowerCase();
+  return USERS.find(u => u.userId.toLowerCase() === id || u.email.toLowerCase() === id) || null;
+}
+
+// ──────────── input validation schemas ────────────
+
+const loginSchema = z.object({
+  identifier: z.string().min(1),
+  password: z.string().min(1),
+});
+
+const rheologyPointSchema = z.object({
+  id_slurry: z.string().min(1),
+  parameter: z.string().min(1),
+  id_rheology: z.string().optional(),
+  timestamp: z.string().or(z.number()).optional(),
+  slurry_type: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
+  value: z.number().nullable().optional(),
+  unit: z.string().nullable().optional(),
+  usl: z.number().nullable().optional(),
+  lsl: z.number().nullable().optional(),
+});
+
+const querySlurryId = z.object({
+  slurryId: z.string().min(1),
+});
+
+// middleware that checks if the request data is valid before it hits the route
+function validate(schema) {
+  return (req, res, next) => {
+    const result = schema.safeParse(req.body || req.query);
+    if (!result.success) {
+      return res.status(400).json({ error: 'Validation failed', details: result.error.flatten().fieldErrors });
+    }
+    req.validated = result.data;
+    next();
+  };
+}
+
+// ──────────── login token checker ────────────
+
+// checks if u have a valid login token before letting u do stuff
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header required' });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = { userId: payload.sub, email: payload.email, role: payload.role };
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+
+// ──────────── auth endpoints (login, reset password, etc) ────────────
+
+// login - checks ur password against the hash and gives u a token if it's right
+app.post('/api/auth/login', async (req, res) => {
+  const parsed = loginSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'identifier and password required' });
+  const { identifier, password } = parsed.data;
+  const user = findUser(identifier);
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  try {
+    const valid = await argon2.verify(user.hash, password);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+  } catch {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  // password checks out - make a token that expires in 8 hours
+  const token = jwt.sign({ sub: user.userId, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  res.json({ ok: true, token, user: { userId: user.userId, email: user.email, role: user.role } });
+});
+
+// step 1 of password reset - makes a one-time link that expires in 15 min
+app.post('/api/auth/reset-request', async (req, res) => {
+  const { identifier } = req.body || {};
+  if (!identifier) return res.status(400).json({ error: 'identifier required' });
+  const user = findUser(identifier);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const token = crypto.randomUUID();
+  resetTokens.set(token, { userId: user.userId, email: user.email, expiresAt: Date.now() + 15 * 60 * 1000 });
+  // tbh in production this would send an email but for now we just return it
+  res.json({ ok: true, to: user.email, token });
+});
+
+// step 2 of password reset - actually changes ur password if the token is still valid
+app.post('/api/auth/reset-confirm', async (req, res) => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword) return res.status(400).json({ error: 'token and newPassword required' });
+  const entry = resetTokens.get(token);
+  if (!entry) return res.status(400).json({ error: 'Invalid or expired token' });
+  if (Date.now() > entry.expiresAt) {
+    resetTokens.delete(token);
+    return res.status(400).json({ error: 'Token expired' });
+  }
+  const user = findUser(entry.userId);
+  if (!user) return res.status(400).json({ error: 'User not found' });
+  user.hash = await argon2.hash(newPassword, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
+  resetTokens.delete(token);
+  res.json({ ok: true });
+});
+
+// ──────────── read endpoints (anyone can hit these) ────────────
+
+// quick health check - just pings the DB to see if it's alive
 app.get('/api/health', async (_req, res) => {
   try {
     await getPool();
@@ -70,7 +296,7 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// List available slurries (distinct id_slurry) with last timestamp
+// gets all the slurry IDs with their last measurement timestamp
 app.get('/api/slurries', async (_req, res) => {
   try {
     const pool = await getPool();
@@ -90,6 +316,7 @@ app.get('/api/slurries', async (_req, res) => {
   }
 });
 
+// gets the latest + previous value for multiple slurries at once (for the dashboard cards)
 app.get('/api/rheology/latest-all', async (req, res) => {
   try {
     const slurriesCsv = String(req.query.slurries || '');
@@ -97,11 +324,9 @@ app.get('/api/rheology/latest-all', async (req, res) => {
     const slurries = slurriesCsv.split(',').map(s => s.trim()).filter(Boolean);
     const params = paramsCsv.split(',').map(s => s.trim()).filter(Boolean);
     if (!slurries.length || !params.length) return res.json({});
-
-    // Normalize for SQL comparison (UPPER + TRIM)
-    const normParams = params.map((p) => p.trim().toUpperCase());
-
+    const normParams = params.map(p => p.trim().toUpperCase());
     const pool = await getPool();
+    // builds safe SQL placeholders so we don't get sql-injected lol
     const slurryPlaceholders = slurries.map((_, i) => `@s${i}`).join(',');
     const paramPlaceholders = normParams.map((_, i) => `@p${i}`).join(',');
     const q = `
@@ -114,26 +339,13 @@ app.get('/api/rheology/latest-all', async (req, res) => {
     slurries.forEach((v, i) => request.input(`s${i}`, sql.VarChar(64), v));
     normParams.forEach((v, i) => request.input(`p${i}`, sql.VarChar(32), v));
     const { recordset: rows } = await request.query(q);
-
-    const toNormKey = (raw) => {
-      const u = String(raw || '').trim().toUpperCase();
-      if (u === 'PH') return 'pH';
-      if (u === 'H2O') return 'H2O';
-      if (u === 'PC') return 'pc';
-      if (u === 'DENSITY') return 'density';
-      if (u === 'VISCOSITY') return 'viscosity';
-      if (u === 'TEMPERATURE') return 'temperature';
-      if (u === 'SILICE') return 'silice';
-      if (u === 'GRAIN' || u === 'GRAINS') return 'grain';
-      return String(raw || '').trim();
-    };
-
     const out = {};
     for (const r of rows) {
       const sid = String(r.id_slurry);
       const p = toNormKey(r.parameter);
       const ms = toMs(r.timestamp);
       out[sid] = out[sid] || {};
+      // first hit = latest value, second hit = the one before it (for trend arrows)
       if (!out[sid][p]) out[sid][p] = { t: Number.isFinite(ms) ? ms : 0, v: Number(r.value), unit: r.unit || undefined };
       else if (out[sid][p] && out[sid][p].prevV == null) {
         out[sid][p].prevV = Number(r.value);
@@ -146,6 +358,7 @@ app.get('/api/rheology/latest-all', async (req, res) => {
   }
 });
 
+// gets the full history of measurements for one slurry (for charts basically)
 app.get('/api/rheology/all', async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
@@ -153,9 +366,7 @@ app.get('/api/rheology/all', async (req, res) => {
     const params = paramsCsv.split(',').map(s => s.trim()).filter(Boolean);
     const includeBounds = String(req.query.includeBounds || '') === '1';
     if (!slurryId || !params.length) return res.json({});
-
-    const normParams = params.map((p) => p.trim().toUpperCase());
-
+    const normParams = params.map(p => p.trim().toUpperCase());
     const pool = await getPool();
     const placeholders = normParams.map((_, i) => `@p${i}`).join(',');
     const q = `
@@ -167,32 +378,17 @@ app.get('/api/rheology/all', async (req, res) => {
     request.input('slurryId', sql.VarChar(64), slurryId);
     normParams.forEach((v, i) => request.input(`p${i}`, sql.VarChar(32), v));
     const { recordset: rows } = await request.query(q);
-
-    const toNormKey = (raw) => {
-      const u = String(raw || '').trim().toUpperCase();
-      if (u === 'PH') return 'pH';
-      if (u === 'H2O') return 'H2O';
-      if (u === 'PC') return 'pc';
-      if (u === 'DENSITY') return 'density';
-      if (u === 'VISCOSITY') return 'viscosity';
-      if (u === 'TEMPERATURE') return 'temperature';
-      if (u === 'SILICE') return 'silice';
-      if (u === 'GRAIN' || u === 'GRAINS') return 'grain';
-      return String(raw || '').trim();
-    };
-
     const map = {};
-    rows.forEach((r) => {
+    rows.forEach(r => {
       const key = toNormKey(r.parameter);
       const ms = toMs(r.timestamp);
       if (!map[key]) map[key] = [];
       map[key].push({ t: Number.isFinite(ms) ? ms : 0, v: Number(r.value), unit: r.unit || undefined });
     });
-
     if (includeBounds) {
+      // grabs the most recent upper/lower limits for each parameter
       const rq = pool.request();
       rq.input('slurryId', sql.VarChar(64), slurryId);
-      // Get latest bounds per parameter using ROW_NUMBER
       const { recordset: brows } = await rq.query(
         `WITH ranked AS (
            SELECT [parameter], [usl], [lsl], [timestamp],
@@ -201,7 +397,7 @@ app.get('/api/rheology/all', async (req, res) => {
          )
          SELECT [parameter], [usl], [lsl] FROM ranked WHERE rn=1`
       );
-      const bounds = brows.map((r) => ({ key: r.parameter, low: r.lsl ?? null, high: r.usl ?? null }));
+      const bounds = brows.map(r => ({ key: r.parameter, low: r.lsl ?? null, high: r.usl ?? null }));
       return res.json({ series: map, bounds });
     }
     res.json({ series: map });
@@ -210,6 +406,7 @@ app.get('/api/rheology/all', async (req, res) => {
   }
 });
 
+// just gets the upper/lower limits for a slurry's params
 app.get('/api/rheology/bounds', async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
@@ -217,7 +414,7 @@ app.get('/api/rheology/bounds', async (req, res) => {
     const pool = await getPool();
     const rq = pool.request();
     rq.input('slurryId', sql.VarChar(64), slurryId);
-    // Get latest bounds per parameter using ROW_NUMBER to pick most recent row
+    // uses a window function to grab only the latest bounds per parameter
     const { recordset: rows } = await rq.query(
       `WITH ranked AS (
          SELECT [parameter], [usl], [lsl], [timestamp],
@@ -226,17 +423,14 @@ app.get('/api/rheology/bounds', async (req, res) => {
        )
        SELECT [parameter], [usl], [lsl] FROM ranked WHERE rn=1`
     );
-    const mapKey = (p) => p === 'density' ? 'densite'
-      : p === 'viscosity' ? 'viscosite'
-      : p === 'pH' ? 'ph'
-      : String(p).toLowerCase();
-    const out = rows.map((r) => ({ key: mapKey(r.parameter), low: r.lsl ?? null, high: r.usl ?? null }));
+    const out = rows.map(r => ({ key: toFrontendKey(r.parameter), low: r.lsl ?? null, high: r.usl ?? null }));
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e?.message || 'error' });
   }
 });
 
+// gets measurement history for one specific slurry + parameter combo
 app.get('/api/rheology', async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
@@ -252,7 +446,7 @@ app.get('/api/rheology', async (req, res) => {
        WHERE [id_slurry]=@slurryId AND UPPER(LTRIM(RTRIM([parameter])))=@parameter
        ORDER BY [timestamp] ASC`
     );
-    const out = rows.map((r) => {
+    const out = rows.map(r => {
       const ms = toMs(r.timestamp);
       return { t: Number.isFinite(ms) ? ms : 0, v: Number(r.value), unit: r.unit || undefined };
     });
@@ -262,17 +456,17 @@ app.get('/api/rheology', async (req, res) => {
   }
 });
 
-// Server-side alert evaluation for latest values vs bounds
+// figures out which slurries have values outside their safe range (alerts!)
 app.get('/api/alerts/latest', async (req, res) => {
   try {
     const slurriesCsv = String(req.query.slurries || req.query.slurryId || '').trim();
     const slurries = slurriesCsv.split(',').map(s => s.trim()).filter(Boolean);
     if (!slurries.length) return res.json({});
     const pool = await getPool();
-    // Latest values per parameter
     const slurryPlaceholders = slurries.map((_, i) => `@s${i}`).join(',');
     const rq = pool.request();
     slurries.forEach((v, i) => rq.input(`s${i}`, sql.VarChar(64), v));
+    // grabs the most recent value for each slurry + parameter
     const { recordset: latestRows } = await rq.query(`
       WITH cte AS (
         SELECT [id_slurry],[parameter],[timestamp],[value],[unit],
@@ -283,9 +477,9 @@ app.get('/api/alerts/latest', async (req, res) => {
       SELECT [id_slurry],[parameter],[timestamp],[value],[unit]
       FROM cte WHERE rn = 1
     `);
-    // Latest bounds per parameter
     const rq2 = pool.request();
     slurries.forEach((v, i) => rq2.input(`s${i}`, sql.VarChar(64), v));
+    // grabs the latest upper/lower bounds too
     const { recordset: boundRows } = await rq2.query(`
       WITH b AS (
         SELECT [id_slurry],[parameter],[usl],[lsl],
@@ -296,36 +490,23 @@ app.get('/api/alerts/latest', async (req, res) => {
       SELECT [id_slurry],[parameter],[usl],[lsl]
       FROM b WHERE rn = 1
     `);
-    const keyNorm = (raw) => {
-      const u = String(raw || '').trim().toUpperCase();
-      if (u === 'PH') return 'pH';
-      if (u === 'H2O') return 'H2O';
-      if (u === 'PC') return 'pc';
-      if (u === 'DENSITY') return 'density';
-      if (u === 'VISCOSITY') return 'viscosity';
-      if (u === 'TEMPERATURE') return 'temperature';
-      if (u === 'SILICE') return 'silice';
-      if (u === 'GRAIN' || u === 'GRAINS') return 'grain';
-      return String(raw || '').trim();
-    };
-    const boundsMap = new Map(); // key: sid|param => {low,high}
+    const boundsMap = new Map();
     for (const r of boundRows) {
       const sid = String(r.id_slurry);
-      const p = keyNorm(r.parameter);
+      const p = toNormKey(r.parameter);
       boundsMap.set(`${sid}|${p}`, { low: r.lsl ?? null, high: r.usl ?? null });
     }
     const out = {};
     for (const r of latestRows) {
       const sid = String(r.id_slurry);
-      const p = keyNorm(r.parameter);
+      const p = toNormKey(r.parameter);
       const val = Number(r.value);
       const b = boundsMap.get(`${sid}|${p}`) || { low: null, high: null };
-      const hasLow = b.low != null;
-      const hasHigh = b.high != null;
       let status = 'ok';
-      if (hasLow && val < b.low) status = 'err';
-      if (hasHigh && val > b.high) status = 'err';
-      if (hasLow && hasHigh && status === 'ok') {
+      // out of bounds = error, within 15% of the edge = warning
+      if (b.low != null && val < b.low) status = 'err';
+      if (b.high != null && val > b.high) status = 'err';
+      if (b.low != null && b.high != null && status === 'ok') {
         const span = (b.high - b.low);
         if (span > 0) {
           const edge = span * 0.15;
@@ -341,22 +522,87 @@ app.get('/api/alerts/latest', async (req, res) => {
   }
 });
 
-// Insert/Update a single rheology point
-app.post('/api/rheology/point', async (req, res) => {
+// ──────────── user preferences (saved per user) ────────────
+
+// makes the prefs table if it doesn't exist yet - runs every time just in case
+async function ensureUserPrefsTable() {
+  const pool = await getPool();
+  await pool.request().query(`
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='user_prefs' AND xtype='U')
+    CREATE TABLE [user_prefs] (
+      [user_id] NVARCHAR(128) NOT NULL PRIMARY KEY,
+      [data] NVARCHAR(MAX) NULL,
+      [updated_at] DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
+    );
+  `);
+}
+
+// gets a user's saved preferences (like theme, language, etc)
+app.get('/api/user-prefs', async (req, res) => {
   try {
-    const b = (req.body || {});
-    const id_slurry = String(b.id_slurry || '').trim();
-    const parameter = String(b.parameter || '').trim().toUpperCase();
-    const ts = b.timestamp ? new Date(b.timestamp) : new Date();
-    if (!id_slurry || !parameter) return res.status(400).json({ error: 'id_slurry and parameter required' });
-    const id_rheology = String(b.id_rheology || `${id_slurry}|${parameter}|${ts.toISOString()}`);
-    const slurry_type = b.slurry_type != null ? String(b.slurry_type) : null;
-    const source = b.source != null ? String(b.source) : null;
-    const value = (b.value != null) ? Number(b.value) : null;
-    const unit = b.unit != null ? String(b.unit) : null;
-    const usl = (b.usl != null) ? Number(b.usl) : null;
-    const lsl = (b.lsl != null) ? Number(b.lsl) : null;
+    const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    await ensureUserPrefsTable();
     const pool = await getPool();
+    const rq = pool.request();
+    rq.input('u', sql.NVarChar(128), userId);
+    const { recordset: rows } = await rq.query(`SELECT [data] FROM [user_prefs] WHERE [user_id]=@u`);
+    const data = rows[0]?.data || null;
+    try {
+      return res.json({ ok: true, prefs: data ? JSON.parse(data) : null });
+    } catch {
+      return res.json({ ok: true, prefs: null });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e?.message || 'error' });
+  }
+});
+
+// saves user prefs - uses MERGE so it creates or updates in one shot
+app.put('/api/user-prefs', requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const prefs = req.body?.prefs ?? null;
+    await ensureUserPrefsTable();
+    const pool = await getPool();
+    const rq = pool.request();
+    rq.input('u', sql.NVarChar(128), userId);
+    rq.input('d', sql.NVarChar(sql.MAX), JSON.stringify(prefs ?? null));
+    // upsert - if the row exists update it, if not create it
+    await rq.query(`
+      MERGE [user_prefs] AS t
+      USING (SELECT @u AS user_id, @d AS data) AS s
+      ON (t.user_id = s.user_id)
+      WHEN MATCHED THEN UPDATE SET t.data = s.data, t.updated_at = SYSDATETIMEOFFSET()
+      WHEN NOT MATCHED THEN INSERT (user_id, data) VALUES (s.user_id, s.data);`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || 'error' });
+  }
+});
+
+// ──────────── write endpoints (u gotta be logged in for these) ────────────
+
+// adds or updates a single data point - checks if it already exists first
+app.post('/api/rheology/point', requireAuth, async (req, res) => {
+  const parsed = rheologyPointSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten().fieldErrors });
+  try {
+    const b = parsed.data;
+    const id_slurry = b.id_slurry.trim();
+    const parameter = b.parameter.trim().toUpperCase();
+    const ts = b.timestamp ? new Date(b.timestamp) : new Date();
+    // builds a unique ID if one wasn't provided
+    const id_rheology = b.id_rheology || `${id_slurry}|${parameter}|${ts.toISOString()}`;
+    const slurry_type = b.slurry_type ?? null;
+    const source = b.source ?? null;
+    const value = b.value ?? null;
+    const unit = b.unit ?? null;
+    const usl = b.usl ?? null;
+    const lsl = b.lsl ?? null;
+    const pool = await getPool();
+    // check if this data point already exists
     const exRq = pool.request();
     exRq.input('id', sql.VarChar(128), id_rheology);
     const { recordset: ex } = await exRq.query(`SELECT 1 as x FROM [rheology] WHERE [id_rheology]=@id`);
@@ -372,6 +618,7 @@ app.post('/api/rheology/point', async (req, res) => {
     rq.input('usl', sql.Float, usl);
     rq.input('lsl', sql.Float, lsl);
     if (ex.length) {
+      // already exists so we update it
       await rq.query(`
         UPDATE [rheology]
         SET [id_slurry]=@slurry, [slurry_type]=@stype, [timestamp]=@ts, [source]=@src,
@@ -379,6 +626,7 @@ app.post('/api/rheology/point', async (req, res) => {
         WHERE [id_rheology]=@id`);
       return res.json({ ok: true, updated: id_rheology });
     } else {
+      // new point, insert it
       await rq.query(`
         INSERT INTO [rheology] ([id_rheology],[id_slurry],[slurry_type],[timestamp],[source],[parameter],[value],[unit],[usl],[lsl])
         VALUES (@id,@slurry,@stype,@ts,@src,@param,@val,@unit,@usl,@lsl)`);
@@ -389,62 +637,9 @@ app.post('/api/rheology/point', async (req, res) => {
   }
 });
 
-async function ensureUserPrefsTable() {
-  const pool = await getPool();
-  await pool.request().query(`
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='user_prefs' AND xtype='U')
-    CREATE TABLE [user_prefs] (
-      [user_id] NVARCHAR(128) NOT NULL PRIMARY KEY,
-      [data] NVARCHAR(MAX) NULL,
-      [updated_at] DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
-    );
-  `);
-}
+// ──────────── csv export & import ────────────
 
-app.get('/api/user-prefs', async (req, res) => {
-  try {
-    const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
-    if (!userId) return res.status(400).json({ error: 'userId required' });
-    await ensureUserPrefsTable();
-    const pool = await getPool();
-    const rq = pool.request();
-    rq.input('u', sql.NVarChar(128), userId);
-    const { recordset: rows } = await rq.query(`SELECT [data] FROM [user_prefs] WHERE [user_id]=@u`);
-    const data = rows[0]?.data || null;
-    try {
-      const parsed = data ? JSON.parse(data) : null;
-      return res.json({ ok: true, prefs: parsed });
-    } catch {
-      return res.json({ ok: true, prefs: null });
-    }
-  } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
-  }
-});
-
-app.put('/api/user-prefs', async (req, res) => {
-  try {
-    const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
-    if (!userId) return res.status(400).json({ error: 'userId required' });
-    const prefs = req.body?.prefs ?? null;
-    await ensureUserPrefsTable();
-    const pool = await getPool();
-    const rq = pool.request();
-    rq.input('u', sql.NVarChar(128), userId);
-    rq.input('d', sql.NVarChar(sql.MAX), JSON.stringify(prefs ?? null));
-    await rq.query(`
-      MERGE [user_prefs] AS t
-      USING (SELECT @u AS user_id, @d AS data) AS s
-      ON (t.user_id = s.user_id)
-      WHEN MATCHED THEN UPDATE SET t.data = s.data, t.updated_at = SYSDATETIMEOFFSET()
-      WHEN NOT MATCHED THEN INSERT (user_id, data) VALUES (s.user_id, s.data);`);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
-  }
-});
-
-// ---------------- CSV Export/Import ----------------
+// dumps all data for a slurry as a downloadable CSV file
 app.get('/api/rheology/export-csv', async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '').trim();
@@ -454,6 +649,7 @@ app.get('/api/rheology/export-csv', async (req, res) => {
     const pool = await getPool();
     const rq = pool.request();
     rq.input('slurryId', sql.VarChar(64), slurryId);
+    // optionally filter by time range if start/end are given
     let whereTime = '';
     if (Number.isFinite(start) && start > 0) { rq.input('start', sql.DateTimeOffset, new Date(start)); whereTime += ' AND [timestamp] >= @start'; }
     if (Number.isFinite(end) && end > 0) { rq.input('end', sql.DateTimeOffset, new Date(end)); whereTime += ' AND [timestamp] <= @end'; }
@@ -464,17 +660,19 @@ app.get('/api/rheology/export-csv', async (req, res) => {
       ORDER BY [timestamp] ASC`;
     const { recordset: rows } = await rq.query(q);
     const hdr = 'id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl';
-    const csv = [hdr].concat(rows.map((r) => {
-      const id = (r.id_rheology != null) ? String(r.id_rheology) : `${r.id_slurry}|${r.parameter}|${new Date(r.timestamp).toISOString()}`;
-      const st = (r.slurry_type != null) ? String(r.slurry_type) : (String(r.id_slurry || '').split('_')[0] || '');
-      const ts = new Date(r.timestamp).toISOString();
-      const source = r.source != null ? String(r.source) : '';
-      const param = String(r.parameter || '');
-      const val = (r.value != null) ? String(Number(r.value)) : '';
-      const unit = r.unit != null ? String(r.unit) : '';
-      const usl = (r.usl != null) ? String(Number(r.usl)) : '';
-      const lsl = (r.lsl != null) ? String(Number(r.lsl)) : '';
-      return [id, r.id_slurry, st, ts, source, param, val, unit, usl, lsl].join(',');
+
+    // wraps values in quotes if they contain commas or quotes (csv spec stuff)
+    function csvEscape(val) {
+      const s = String(val ?? '');
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }
+
+    const csv = [hdr].concat(rows.map(r => {
+      const id = r.id_rheology != null ? String(r.id_rheology) : `${r.id_slurry}|${r.parameter}|${new Date(r.timestamp).toISOString()}`;
+      return [id, r.id_slurry, r.slurry_type || '', new Date(r.timestamp).toISOString(), r.source || '',
+        r.parameter || '', r.value != null ? Number(r.value) : '', r.unit || '',
+        r.usl != null ? Number(r.usl) : '', r.lsl != null ? Number(r.lsl) : ''].map(csvEscape).join(',');
     })).join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${slurryId}_export.csv"`);
@@ -484,7 +682,8 @@ app.get('/api/rheology/export-csv', async (req, res) => {
   }
 });
 
-app.post('/api/rheology/import-csv', async (req, res) => {
+// takes a csv file apart line by line and shoves it into the database
+app.post('/api/rheology/import-csv', requireAuth, async (req, res) => {
   try {
     const override = String(req.query.override || '0') === '1';
     const contentType = String(req.headers['content-type'] || '').toLowerCase();
@@ -492,76 +691,146 @@ app.post('/api/rheology/import-csv', async (req, res) => {
     if (!body || typeof body !== 'string') return res.status(400).json({ error: 'CSV body required as text' });
     const lines = body.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     if (!lines.length) return res.status(400).json({ error: 'Empty CSV' });
-    const header = lines[0].toLowerCase().replace(/\s+/g, '');
-    const expected = 'id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl';
-    if (header !== expected) return res.status(400).json({ error: 'Invalid header', expected });
-    const rows = lines.slice(1).map(line => line.split(','));
-    const conflicts = [];
-    const inserted = [];
-    const updated = [];
+
+    // makes sure the csv header matches what we expect
+    const headerFields = parseCsvLine(lines[0]).map(s => s.toLowerCase().replace(/\s+/g, ''));
+    const expected = ['id_rheology','id_slurry','slurry_type','timestamp','source','parameter','value','unit','usl','lsl'];
+    if (headerFields.join(',') !== expected.join(',')) return res.status(400).json({ error: 'Invalid header', expected: expected.join(',') });
+
+    // parse every data row from the csv
+    const dataRows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const parts = parseCsvLine(lines[i]);
+      if (parts.length !== 10) continue;
+      dataRows.push(parts.map(s => s.trim()));
+    }
+    if (!dataRows.length) return res.status(400).json({ error: 'No valid data rows' });
+
     const pool = await getPool();
-    const tx = new sql.Transaction(await pool);
+    // wraps everything in a transaction so if something fails it all rolls back
+    const tx = new sql.Transaction(pool);
     await tx.begin();
+
     try {
-      for (const parts of rows) {
-        if (parts.length !== 10) continue;
-        const [id_rheology, id_slurry, slurry_type, timestamp, source, parameter, value, unit, usl, lsl] = parts.map(s => s.trim());
-        const rq = new sql.Request(tx);
-        rq.input('id', sql.VarChar(128), id_rheology);
-        const { recordset: ex } = await rq.query(`SELECT 1 as x FROM [rheology] WHERE [id_rheology]=@id`);
-        if (ex.length && !override) {
-          conflicts.push(id_rheology);
-          continue;
+      // makes a temp table to stage the csv data before merging it
+      await new sql.Request(tx).query(`
+        CREATE TABLE #csv_import (
+          [id_rheology] VARCHAR(128),
+          [id_slurry] VARCHAR(64),
+          [slurry_type] VARCHAR(32) NULL,
+          [timestamp] DATETIMEOFFSET,
+          [source] VARCHAR(128) NULL,
+          [parameter] VARCHAR(32),
+          [value] FLOAT NULL,
+          [unit] VARCHAR(16) NULL,
+          [usl] FLOAT NULL,
+          [lsl] FLOAT NULL
+        )`);
+
+      // shoves rows into the temp table in batches of 500 so it doesn't choke
+      const BATCH_SIZE = 500;
+      for (let b = 0; b < dataRows.length; b += BATCH_SIZE) {
+        const batch = dataRows.slice(b, b + BATCH_SIZE);
+        const table = new sql.Table('#csv_import');
+        table.create = false;
+        table.columns.add('id_rheology', sql.VarChar(128));
+        table.columns.add('id_slurry', sql.VarChar(64));
+        table.columns.add('slurry_type', sql.VarChar(32), { nullable: true });
+        table.columns.add('timestamp', sql.DateTimeOffset);
+        table.columns.add('source', sql.VarChar(128), { nullable: true });
+        table.columns.add('parameter', sql.VarChar(32));
+        table.columns.add('value', sql.Float, { nullable: true });
+        table.columns.add('unit', sql.VarChar(16), { nullable: true });
+        table.columns.add('usl', sql.Float, { nullable: true });
+        table.columns.add('lsl', sql.Float, { nullable: true });
+        for (const [id_rh, id_sl, s_type, ts, src, param, val, unt, uslV, lslV] of batch) {
+          table.rows.add(
+            id_rh, id_sl, s_type || null, new Date(ts), src || null,
+            param.toUpperCase(), val ? Number(val) : null, unt || null,
+            uslV ? Number(uslV) : null, lslV ? Number(lslV) : null
+          );
         }
-        const rq2 = new sql.Request(tx);
-        rq2.input('id', sql.VarChar(128), id_rheology);
-        rq2.input('slurry', sql.VarChar(64), id_slurry);
-        rq2.input('stype', sql.VarChar(32), slurry_type || null);
-        rq2.input('ts', sql.DateTimeOffset, new Date(timestamp));
-        rq2.input('src', sql.VarChar(128), source || null);
-        rq2.input('param', sql.VarChar(32), String(parameter || '').trim().toUpperCase());
-        rq2.input('val', sql.Float, value ? Number(value) : null);
-        rq2.input('unit', sql.VarChar(16), unit || null);
-        rq2.input('usl', sql.Float, usl ? Number(usl) : null);
-        rq2.input('lsl', sql.Float, lsl ? Number(lsl) : null);
-        if (ex.length && override) {
-          await rq2.query(`
-            UPDATE [rheology]
-            SET [id_slurry]=@slurry, [slurry_type]=@stype, [timestamp]=@ts, [source]=@src,
-                [parameter]=@param, [value]=@val, [unit]=@unit, [usl]=@usl, [lsl]=@lsl
-            WHERE [id_rheology]=@id`);
-          updated.push(id_rheology);
-        } else {
-          await rq2.query(`
-            INSERT INTO [rheology] ([id_rheology],[id_slurry],[slurry_type],[timestamp],[source],[parameter],[value],[unit],[usl],[lsl])
-            VALUES (@id,@slurry,@stype,@ts,@src,@param,@val,@unit,@usl,@lsl)`);
-          inserted.push(id_rheology);
-        }
+        const bulkReq = new sql.Request(tx);
+        await bulkReq.bulk(table);
       }
-      await tx.commit();
+
+      if (override) {
+        // override mode - updates existing rows and inserts new ones in one go
+        const { recordset: mergeResult } = await new sql.Request(tx).query(`
+          MERGE [rheology] AS target
+          USING #csv_import AS source
+          ON target.[id_rheology] = source.[id_rheology]
+          WHEN MATCHED THEN
+            UPDATE SET
+              target.[id_slurry] = source.[id_slurry],
+              target.[slurry_type] = source.[slurry_type],
+              target.[timestamp] = source.[timestamp],
+              target.[source] = source.[source],
+              target.[parameter] = source.[parameter],
+              target.[value] = source.[value],
+              target.[unit] = source.[unit],
+              target.[usl] = source.[usl],
+              target.[lsl] = source.[lsl]
+          WHEN NOT MATCHED THEN
+            INSERT ([id_rheology],[id_slurry],[slurry_type],[timestamp],[source],[parameter],[value],[unit],[usl],[lsl])
+            VALUES (source.[id_rheology], source.[id_slurry], source.[slurry_type], source.[timestamp],
+                    source.[source], source.[parameter], source.[value], source.[unit], source.[usl], source.[lsl])
+          OUTPUT $action, inserted.[id_rheology];`);
+
+        const inserted = [];
+        const updated = [];
+        for (const r of mergeResult) {
+          if (r['$action'] === 'INSERT') inserted.push(r.id_rheology);
+          else updated.push(r.id_rheology);
+        }
+        await tx.commit();
+        return res.json({ ok: true, inserted, updated });
+      } else {
+        // safe mode - only inserts new rows, tells u about duplicates
+        const { recordset: existing } = await new sql.Request(tx).query(`
+          SELECT source.[id_rheology]
+          FROM #csv_import source
+          INNER JOIN [rheology] target ON target.[id_rheology] = source.[id_rheology]`);
+        const conflicts = existing.map(r => r.id_rheology);
+
+        const { rowsAffected } = await new sql.Request(tx).query(`
+          INSERT INTO [rheology] ([id_rheology],[id_slurry],[slurry_type],[timestamp],[source],[parameter],[value],[unit],[usl],[lsl])
+          SELECT source.[id_rheology], source.[id_slurry], source.[slurry_type], source.[timestamp],
+                 source.[source], source.[parameter], source.[value], source.[unit], source.[usl], source.[lsl]
+          FROM #csv_import source
+          WHERE NOT EXISTS (SELECT 1 FROM [rheology] target WHERE target.[id_rheology] = source.[id_rheology])`);
+
+        const insertedCount = rowsAffected[0] || 0;
+        await tx.commit();
+
+        if (conflicts.length) return res.status(409).json({ ok: false, conflicts, insertedCount });
+        return res.json({ ok: true, insertedCount });
+      }
     } catch (inner) {
-      await tx.rollback();
+      try { await tx.rollback(); } catch { /* rollback failed too, nothing we can do lol */ }
       throw inner;
     }
-    if (conflicts.length) return res.status(409).json({ ok: false, conflicts, inserted, updated });
-    res.json({ ok: true, inserted, updated });
   } catch (e) {
     res.status(500).json({ error: e?.message || 'error' });
   }
 });
 
-// ----------- Static SPA hosting + history fallback (excludes /api) -----------
+// ──────────── serves the frontend app ────────────
+
 const distDir = path.join(process.cwd(), 'dist');
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
+  // any route that's not /api/* gets the frontend - classic SPA trick
   app.get(/^(?!\/api\/).*/, (_req, res) => {
     res.sendFile(path.join(distDir, 'index.html'));
   });
 }
 
-app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[server] SQL Server API listening on ${PORT}`);
-});
+// ──────────── let's gooo ────────────
 
-
+(async () => {
+  await initUserHashes();
+  app.listen(PORT, () => {
+    console.log(`[server] SQL Server API listening on ${PORT}`);
+  });
+})();

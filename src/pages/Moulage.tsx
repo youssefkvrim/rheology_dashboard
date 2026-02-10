@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from '../i18n';
 // @ts-ignore
 import asciiRaw from '../../loading_page/ascii.txt?raw';
 
+// tries to load the ascii art from the server, if that fails uses the bundled one, worst case just shows "SAFRAN"
 function useAsciiSource(): string {
   const [text, setText] = useState<string>('');
   useEffect(() => {
@@ -9,10 +11,12 @@ function useAsciiSource(): string {
     (async () => {
       try {
         let src: string | null = null;
+        // first try fetching it live
         try {
           const res = await fetch('./loading_page/ascii.txt', { cache: 'no-store' });
           if (res.ok) src = await res.text();
         } catch {}
+        // fallback to the bundled import if fetch didnt work
         if (!src && typeof asciiRaw === 'string' && asciiRaw.trim().length > 0) {
           src = asciiRaw;
         }
@@ -27,11 +31,14 @@ function useAsciiSource(): string {
   return text;
 }
 
+// placeholder page for the moulage feature - just shows ascii art and "in development"
 export default function Moulage() {
+  const t = useTranslation();
   const ascii = useAsciiSource();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 24 }}>
+      {/* the big ascii art logo thing */}
       <pre
         style={{
           margin: 0,
@@ -46,7 +53,7 @@ export default function Moulage() {
         }}
       >{ascii}</pre>
       <div style={{ fontSize: 18, fontWeight: 600, color: '#9CA3AF' }}>
-        Cette page est encore en cours de développement.
+        {t('moulage.inDevelopment')}
       </div>
     </div>
   );

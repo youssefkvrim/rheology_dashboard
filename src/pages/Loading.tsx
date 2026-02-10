@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiHealth } from '../services/api';
-// Fallback raw bundle (dev-only). Primary source is /public/loading_page/ascii.txt
+// backup ascii art in case the server one doesnt load
 // @ts-ignore
 import asciiRaw from '../../loading_page/ascii.txt?raw';
 
+// tries to load the ascii art text - server first, bundled file as backup
 function useAsciiSource(): string {
   const [text, setText] = useState<string>('');
   useEffect(() => {
@@ -12,16 +13,14 @@ function useAsciiSource(): string {
     (async () => {
       try {
         let src: string | null = null;
-        // Prefer public-served asset
         try {
           const res = await fetch('./loading_page/ascii.txt', { cache: 'no-store' });
           if (res.ok) src = await res.text();
         } catch {}
-        // Fallback to bundled raw
+        // server didnt work? use the bundled one
         if (!src && typeof asciiRaw === 'string' && asciiRaw.trim().length > 0) {
           src = asciiRaw;
         }
-        // Ensure string
         if (!src) src = 'SAFRAN\nLoading…';
         if (!cancelled) setText(src);
       } catch {
@@ -34,12 +33,13 @@ function useAsciiSource(): string {
 }
 
 export type LoadingProps = {
-  minMs?: number;           // minimum display time (default 3000)
-  serverTimeoutMs?: number; // total time if server unreachable (default 7000 = 3000 + 4000)
-  onReady?: () => void;     // callback when ready to proceed
-  autoNavigate?: boolean;   // if true, navigate to '/' when done (default false when used as gate)
+  minMs?: number;           // how long to show this screen at minimum (3s default)
+  serverTimeoutMs?: number; // how long to wait if server is down (7s default)
+  onReady?: () => void;     // runs when the loading screen is done
+  autoNavigate?: boolean;   // go to home page automatically when done?
 };
 
+// the cool loading screen with animated ascii art - shows while the app boots up
 export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady, autoNavigate = false }: LoadingProps) {
   const navigate = useNavigate();
   const ascii = useAsciiSource();
@@ -49,10 +49,10 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
   const lastTs = useRef<number>(0);
   const [dots, setDots] = useState<number>(0);
   const startRef = useRef<number>(Date.now());
-  const [serverOk, setServerOk] = useState<boolean | null>(null); // null = checking
+  const [serverOk, setServerOk] = useState<boolean | null>(null); // null = still checking
   const [done, setDone] = useState<boolean>(false);
 
-  // Check server health once
+  // pings the server once to see if its up
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -66,13 +66,12 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
     return () => { cancelled = true; };
   }, []);
 
-  // Determine when to finish: 3s if server OK, 7s (3+4) if not
+  // decides when to move on - 3s if server is fine, 7s if its not responding
   useEffect(() => {
     if (done) return;
     const elapsed = () => Date.now() - startRef.current;
     const check = () => {
-      if (serverOk === null) return; // still checking server
-      // Always wait minMs (3s), then if server not OK wait additional time up to serverTimeoutMs
+      if (serverOk === null) return; // still waiting on the ping
       const required = serverOk ? minMs : serverTimeoutMs;
       if (elapsed() >= required) {
         setDone(true);
@@ -85,7 +84,7 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
     return () => clearInterval(id);
   }, [serverOk, minMs, serverTimeoutMs, done, onReady, navigate, autoNavigate]);
 
-  // Character groups to cycle through, preserving overall shape
+  // swaps characters within their group to make the ascii art look animated
   const nextChar = (ch: string, step: number): string => {
     const gA = ['-', '=', '+'];
     const gB = ['*', '#'];
@@ -96,7 +95,7 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
     return ch;
   };
 
-  // Build animated text by diagonally offsetting cycle per position
+  // creates the animated frame - each character cycles with a diagonal wave effect
   const animatedText = useMemo(() => {
     if (!baseLines.length) return '';
     const period = 4;
@@ -114,6 +113,7 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
     return linesOut.join('\n');
   }, [baseLines, frame]);
 
+  // animation loop - runs ~11fps to keep the ascii art shifting around
   useEffect(() => {
     const loop = (t: number) => {
       if (!lastTs.current) lastTs.current = t;
@@ -128,6 +128,7 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, []);
 
+  // the "Loading..." dots animation
   useEffect(() => {
     const id = setInterval(() => setDots(d => (d + 1) % 4), 420);
     return () => clearInterval(id);

@@ -1,47 +1,47 @@
 import { useState } from 'react';
 import { useAuth } from '../features/auth/AuthContext';
+import { useTranslation } from '../i18n';
 
 type Category = 'bug' | 'feature' | 'access' | 'question' | 'other';
 
-const CATEGORIES: Record<Category, string> = {
-  bug: 'Signaler un bug',
-  feature: 'Demande de fonctionnalité',
-  access: 'Demande d\'accès / permissions',
-  question: 'Question générale',
-  other: 'Autre',
-};
-
 export default function Support() {
+  const t = useTranslation();
   const { user } = useAuth();
+  const CATEGORIES: Record<Category, string> = {
+    bug: t('support.bugReport'),
+    feature: t('support.featureRequest'),
+    access: t('support.accessRequest'),
+    question: t('support.generalQuestion'),
+    other: t('support.other'),
+  };
   const [category, setCategory] = useState<Category>('question');
   const [subject, setSubject] = useState<string>('');
   const [message, setMessage] = useState<string>('');
   const [sending, setSending] = useState<boolean>(false);
   const [sent, setSent] = useState<boolean>(false);
 
+  // sends the support ticket (well, kinda - its just a mailto link for now)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim() || !message.trim()) {
-      alert('Veuillez remplir tous les champs.');
+      alert(t('support.fillAllFields'));
       return;
     }
 
     setSending(true);
     try {
-      // TODO: Replace with actual SMTP/SAML email sending via backend
-      // POST /api/support { category, subject, message, userEmail }
-      // Backend should use nodemailer with SMTP config from vault/secrets.env
-      await new Promise((resolve) => setTimeout(resolve, 1500)); // Simulate network delay
+      // TODO: gotta replace this with real email sending from the backend
+      await new Promise((resolve) => setTimeout(resolve, 1500)); // fake delay to look legit
 
-      // For now, open mailto as fallback
-      const mailto = `mailto:youssef.karim@safrangroup.com?subject=${encodeURIComponent(`[Support - ${CATEGORIES[category]}] ${subject}`)}&body=${encodeURIComponent(`De: ${user?.email || 'Utilisateur'}\n\nCatégorie: ${CATEGORIES[category]}\n\n${message}`)}`;
+      // opens ur email app with a pre-filled support message as a fallback
+      const mailto = `mailto:youssef.karim@safrangroup.com?subject=${encodeURIComponent(`[Support - ${CATEGORIES[category]}] ${subject}`)}&body=${encodeURIComponent(`${user?.email || t('common.user')}\n\n${t('support.category')}: ${CATEGORIES[category]}\n\n${message}`)}`;
       window.open(mailto, '_blank');
 
       setSent(true);
       setSubject('');
       setMessage('');
     } catch (err) {
-      alert('Erreur lors de l\'envoi. Veuillez réessayer.');
+      alert(t('support.sendError'));
     } finally {
       setSending(false);
     }
@@ -49,28 +49,28 @@ export default function Support() {
 
   return (
     <div>
-      <h2>Support</h2>
+      <h2>{t('support.title')}</h2>
 
-      {/* Contact form - FIRST */}
+      {/* the form where u describe ur problem */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Contacter le support</h3>
+        <h3>{t('support.contactSupport')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          Remplissez le formulaire ci-dessous. Votre message sera envoyé à l'équipe de support.
+          {t('support.fillForm')}
         </p>
 
         {sent ? (
           <div style={{ marginTop: 16, padding: 16, background: 'rgba(34,197,94,0.1)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.3)' }}>
             <p style={{ margin: 0, color: '#16a34a' }}>
-              ✓ Votre message a été envoyé. Nous vous répondrons dans les plus brefs délais.
+              {t('support.messageSent')}
             </p>
             <button onClick={() => setSent(false)} style={{ marginTop: 12 }}>
-              Envoyer un autre message
+              {t('support.sendAnother')}
             </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12, marginTop: 16, maxWidth: 500 }}>
             <div>
-              <label>Catégorie</label>
+              <label>{t('support.category')}</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as Category)}
@@ -83,23 +83,23 @@ export default function Support() {
             </div>
 
             <div>
-              <label>Sujet</label>
+              <label>{t('support.subject')}</label>
               <input
                 type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                placeholder="Décrivez brièvement votre demande"
+                placeholder={t('support.subjectPlaceholder')}
                 style={{ width: '100%', marginTop: 4 }}
                 required
               />
             </div>
 
             <div>
-              <label>Message</label>
+              <label>{t('support.message')}</label>
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="Détaillez votre demande..."
+                placeholder={t('support.messagePlaceholder')}
                 rows={6}
                 style={{ width: '100%', marginTop: 4, resize: 'vertical' }}
                 required
@@ -107,7 +107,7 @@ export default function Support() {
             </div>
 
             <div>
-              <label>Votre email</label>
+              <label>{t('support.yourEmail')}</label>
               <input
                 type="email"
                 value={user?.email || ''}
@@ -117,17 +117,17 @@ export default function Support() {
             </div>
 
             <button type="submit" disabled={sending} style={{ marginTop: 8 }}>
-              {sending ? 'Envoi en cours...' : 'Envoyer le message'}
+              {sending ? t('support.sending') : t('support.sendMessage')}
             </button>
           </form>
         )}
       </div>
 
-      {/* Direct contact - SECOND */}
+      {/* if u need help asap just email directly */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Contact direct</h3>
+        <h3>{t('support.directContact')}</h3>
         <p className="muted" style={{ fontSize: 12 }}>
-          Pour les urgences ou questions techniques :
+          {t('support.urgencies')}
         </p>
         <ul style={{ marginTop: 8, paddingLeft: 20 }}>
           <li>
@@ -136,37 +136,35 @@ export default function Support() {
         </ul>
       </div>
 
-      {/* FAQ / Quick links - THIRD */}
+      {/* common questions so u dont have to ask lol */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Questions fréquentes</h3>
+        <h3>{t('support.faq')}</h3>
         <div style={{ marginTop: 12 }}>
           <details style={{ marginBottom: 8 }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>Comment exporter mes données en CSV ?</summary>
+            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>{t('support.faqExportCsv')}</summary>
             <p className="muted" style={{ marginTop: 8, paddingLeft: 16 }}>
-              Allez dans la page "Données", sélectionnez une barbotine et une période, puis cliquez sur "Télécharger CSV".
+              {t('support.faqExportCsvAnswer')}
             </p>
           </details>
           <details style={{ marginBottom: 8 }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>Comment modifier les bornes de conformité ?</summary>
+            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>{t('support.faqBounds')}</summary>
             <p className="muted" style={{ marginTop: 8, paddingLeft: 16 }}>
-              Sur chaque graphique, cliquez sur "…" puis modifiez les valeurs min/max dans la section "Conformité".
+              {t('support.faqBoundsAnswer')}
             </p>
           </details>
           <details style={{ marginBottom: 8 }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>Comment demander des droits supplémentaires ?</summary>
+            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>{t('support.faqRights')}</summary>
             <p className="muted" style={{ marginTop: 8, paddingLeft: 16 }}>
-              Allez dans votre Profil et cliquez sur "Demander des droits supérieurs". Un administrateur traitera votre demande.
+              {t('support.faqRightsAnswer')}
             </p>
           </details>
         </div>
       </div>
 
-      {/* Developer note */}
+      {/* heads up that this is not fully wired up yet */}
       <div className="panel" style={{ marginTop: 16, background: 'rgba(234,179,8,0.1)', borderColor: 'rgba(234,179,8,0.3)' }}>
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          <strong>Note :</strong> Le formulaire utilise actuellement mailto comme fallback.
-          Pour une vraie intégration SMTP/SAML, configurer les variables dans vault/secrets.env
-          (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) et implémenter POST /api/support. -voir démarche avec Javid MOUGAMADOU
+          <strong>Note :</strong> {t('support.note')}
         </p>
       </div>
     </div>

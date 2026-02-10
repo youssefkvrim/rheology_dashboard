@@ -1,6 +1,8 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useCallback, useEffect, ReactNode } from 'react';
 import { Language, LANGUAGE_NAMES, getTranslation } from './translations';
+import { usePrefsStore } from '../store/prefsStore';
 
+// wraps the app so any component can use translations
 interface I18nContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -10,25 +12,18 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'app:language';
+const VALID_LANGS: Language[] = ['fr', 'en', 'it', 'es'];
 
+// provides language + t() to the whole app tree
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored && ['fr', 'en', 'it', 'es'].includes(stored)) {
-        return stored as Language;
-      }
-    } catch {}
-    return 'fr'; // Default to French
-  });
+  const rawLang = usePrefsStore(s => s.language);
+  const setLangPref = usePrefsStore(s => s.setLanguage);
+  // if stored lang is invalid, default to french
+  const language: Language = VALID_LANGS.includes(rawLang as Language) ? (rawLang as Language) : 'fr';
 
   const setLanguage = useCallback((lang: Language) => {
-    setLanguageState(lang);
-    try {
-      localStorage.setItem(STORAGE_KEY, lang);
-    } catch {}
-  }, []);
+    setLangPref(lang);
+  }, [setLangPref]);
 
   const t = useCallback((key: string): string => {
     return getTranslation(language, key);
@@ -39,7 +34,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     name,
   }));
 
-  // Update document language attribute
+  // set html lang attr for screen readers n stuff
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
@@ -59,7 +54,7 @@ export function useI18n() {
   return context;
 }
 
-// Convenience hook for just the translation function
+// lazy version - just gives u t() instead of the whole context
 export function useTranslation() {
   const { t } = useI18n();
   return t;

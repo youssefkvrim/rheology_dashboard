@@ -1,27 +1,31 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '../features/auth/AuthContext';
 import { hashPassword } from '../services/api';
+import { useTranslation } from '../i18n';
 
 export default function Profile() {
+  const t = useTranslation();
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Local state for editable fields (stub - will connect to UTILISATEUR table)
+  // all the profile fields u can edit (not saved to backend yet tho)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  // basically turns ur email into a display name like "youssef karim"
   const [displayName, setDisplayName] = useState<string>(() => {
     const email = user?.email || '';
     const base = (email.split('@')[0] || '').replace(/[_.-]/g, ' ').trim();
     const parts = base.split(/\s+/).filter(Boolean);
-    return parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : base || 'Utilisateur';
+    return parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : base || t('common.user');
   });
   const [email, setEmail] = useState<string>(user?.email || '');
   const [phoneRaw, setPhoneRaw] = useState<string>('');
+  // hardcoded role check lol, only youssef gets editor
   const [role, setRole] = useState<string>(() => {
     const e = user?.email?.toLowerCase() || '';
     return e === 'youssef.karim@safrangroup.com' ? 'Editor' : 'Read-only';
   });
 
-  // Password change state
+  // password change stuff
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -29,14 +33,14 @@ export default function Profile() {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState(false);
 
-  // Admin rights dialog state
+  // for when u wanna request admin rights
   const [showAdminDialog, setShowAdminDialog] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminMessage, setAdminMessage] = useState('');
   const [adminEmailError, setAdminEmailError] = useState('');
   const [adminSending, setAdminSending] = useState(false);
 
-  // Initials for avatar fallback
+  // grabs ur initials so we can show them if u have no profile pic
   const initials = (() => {
     const parts = displayName.split(/\s+/).filter(Boolean);
     return parts.length >= 2
@@ -44,10 +48,9 @@ export default function Profile() {
       : displayName.charAt(0).toUpperCase();
   })();
 
-  // Phone formatting: display with spaces, store raw digits
+  // makes the phone number look nice with spaces like +33 6 12 34 56 78
   const formatPhoneDisplay = (raw: string): string => {
     if (!raw) return '';
-    // Format: +33 6 12 34 56 78
     const digits = raw.replace(/\D/g, '');
     if (digits.length <= 2) return '+' + digits;
     let formatted = '+' + digits.slice(0, 2);
@@ -61,39 +64,35 @@ export default function Profile() {
     const input = e.target.value;
     const lastChar = input.slice(-1);
     
-    // If empty, reset
+    // nothing typed? reset
     if (!input) {
       setPhoneRaw('');
       return;
     }
     
-    // Get only digits from input
+    // strip everything thats not a digit
     let digits = input.replace(/[^\d+]/g, '').replace(/\+/g, '');
     
-    // Handle first character cases
+    // smart auto-fill: typing 0 or any digit auto-adds the +33 french prefix
     if (phoneRaw === '' && digits.length === 1) {
       if (lastChar === '+') {
-        // User typed +, start with empty (will show +)
         setPhoneRaw('');
         return;
       } else if (lastChar === '0') {
-        // User typed 0, prefill +33
         setPhoneRaw('33');
         return;
       } else if (/[1-9]/.test(lastChar)) {
-        // User typed a digit 1-9, prefill +33 + that digit
         setPhoneRaw('33' + lastChar);
         return;
       } else if (/[a-zA-Z]/.test(lastChar)) {
-        // Ignore letters
         return;
       }
     }
     
-    // Filter out any letters
+    // no letters allowed lol
     digits = digits.replace(/[a-zA-Z]/g, '');
     
-    // Limit to 15 digits (after +33, so 17 total including country code)
+    // cap it at 17 digits max (country code included)
     if (digits.length > 17) {
       digits = digits.slice(0, 17);
     }
@@ -101,6 +100,7 @@ export default function Profile() {
     setPhoneRaw(digits);
   };
 
+  // turns the uploaded file into a url we can display as avatar
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -109,22 +109,23 @@ export default function Profile() {
   };
 
   const handleSave = () => {
-    // TODO: Connect to backend UTILISATEUR table
+    // TODO: this is fake rn, gotta connect it to the real backend later
     alert('Modifications enregistrées (simulation). Connecter au backend UTILISATEUR pour persistance.');
   };
 
+  // checks if the passwords match and all that, then hashes it
   const handlePasswordChange = async () => {
     setPasswordError('');
     if (!newPassword || !confirmPassword) {
-      setPasswordError('Veuillez remplir tous les champs.');
+      setPasswordError(t('profile.fillAllFields'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPasswordError('Les mots de passe ne correspondent pas.');
+      setPasswordError(t('profile.passwordsNoMatch'));
       return;
     }
     if (newPassword.length < 6) {
-      setPasswordError('Le mot de passe doit contenir au moins 6 caractères.');
+      setPasswordError(t('profile.passwordTooShort'));
       return;
     }
 
@@ -132,6 +133,7 @@ export default function Profile() {
       const hashedPassword = await hashPassword(newPassword);
       console.log('New password hash:', hashedPassword);
       setPasswordSuccess(true);
+      // waits 2s so u can see the success msg then closes the modal
       setTimeout(() => {
         setShowPasswordModal(false);
         setOldPassword('');
@@ -140,29 +142,30 @@ export default function Profile() {
         setPasswordSuccess(false);
       }, 2000);
     } catch (err) {
-      setPasswordError('Erreur lors du changement de mot de passe.');
+      setPasswordError(t('profile.passwordChangeError'));
     }
   };
 
   const handleForgotPassword = () => {
-    alert('Un email de réinitialisation sera envoyé à votre adresse.');
+    alert(t('login.resetEmailSent'));
     setShowPasswordModal(false);
   };
 
+  // sends the admin rights request (only safrangroup emails allowed)
   const handleAdminRequest = () => {
     setAdminEmailError('');
     if (!adminEmail) {
-      setAdminEmailError('Email du supérieur requis.');
+      setAdminEmailError(t('profile.supervisorEmailRequired'));
       return;
     }
     if (!adminEmail.toLowerCase().endsWith('@safrangroup.com')) {
-      setAdminEmailError('L\'email doit être @safrangroup.com');
+      setAdminEmailError(t('profile.emailMustBeSafran'));
       return;
     }
     setAdminSending(true);
-    // Simulate sending
+    // fake delay to pretend its sending lol
     setTimeout(() => {
-      alert(`Demande envoyée à ${adminEmail}`);
+      alert(`${t('profile.requestSent')} ${adminEmail}`);
       setShowAdminDialog(false);
       setAdminEmail('');
       setAdminMessage('');
@@ -172,11 +175,10 @@ export default function Profile() {
 
   return (
     <div>
-      <h2>Profil</h2>
+      <h2>{t('profile.title')}</h2>
 
-      {/* Avatar section */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Photo de profil</h3>
+        <h3>{t('profile.profilePicture')}</h3>
         <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 12 }}>
           <div
             onClick={() => fileInputRef.current?.click()}
@@ -200,10 +202,10 @@ export default function Profile() {
             )}
           </div>
           <div>
-            <button onClick={() => fileInputRef.current?.click()}>Changer la photo</button>
+            <button onClick={() => fileInputRef.current?.click()}>{t('profile.changeAvatar')}</button>
             {avatarUrl && (
               <button onClick={() => setAvatarUrl(null)} style={{ marginLeft: 8, background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)' }}>
-                Supprimer
+                {t('profile.removeAvatar')}
               </button>
             )}
           </div>
@@ -217,12 +219,12 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* Personal info */}
+      {/* ur name, email, phone etc */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Informations personnelles</h3>
+        <h3>{t('profile.personalInfo')}</h3>
         <div style={{ display: 'grid', gap: 12, marginTop: 12, maxWidth: 400 }}>
           <div>
-            <label>Nom complet</label>
+            <label>{t('profile.fullName')}</label>
             <input
               type="text"
               value={displayName}
@@ -231,7 +233,7 @@ export default function Profile() {
             />
           </div>
           <div>
-            <label>Email</label>
+            <label>{t('profile.email')}</label>
             <input
               type="email"
               value={email}
@@ -240,7 +242,7 @@ export default function Profile() {
             />
           </div>
           <div>
-            <label>Téléphone</label>
+            <label>{t('profile.phone')}</label>
             <input
               type="tel"
               value={formatPhoneDisplay(phoneRaw)}
@@ -250,7 +252,7 @@ export default function Profile() {
             />
           </div>
           <div>
-            <label>Rôle actuel</label>
+            <label>{t('profile.currentRole')}</label>
             <input
               type="text"
               value={role}
@@ -258,13 +260,13 @@ export default function Profile() {
               style={{ width: '100%', marginTop: 4, opacity: 0.7 }}
             />
           </div>
-          <button onClick={handleSave} style={{ marginTop: 8 }}>Enregistrer les modifications</button>
+          <button onClick={handleSave} style={{ marginTop: 8 }}>{t('profile.saveChanges')}</button>
         </div>
       </div>
 
-      {/* Password section - same width as other inputs */}
+      {/* password section */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Mot de passe</h3>
+        <h3>{t('profile.password')}</h3>
         <div style={{ display: 'grid', gap: 12, marginTop: 12, maxWidth: 400 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
@@ -273,28 +275,28 @@ export default function Profile() {
               readOnly
               style={{ flex: 1, cursor: 'default', fontStyle: 'italic', color: 'var(--muted)' }}
             />
-            <button onClick={() => setShowPasswordModal(true)}>Modifier</button>
+            <button onClick={() => setShowPasswordModal(true)}>{t('profile.changePassword')}</button>
           </div>
         </div>
       </div>
 
-      {/* Password change modal */}
+      {/* the popup where u actually change ur password */}
       {showPasswordModal && (
         <div className="modal-backdrop" onClick={() => setShowPasswordModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
             <div className="modal-header">
-              <h3 style={{ margin: 0 }}>Changer le mot de passe</h3>
+              <h3 style={{ margin: 0 }}>{t('profile.changePasswordTitle')}</h3>
               <button className="icon-btn" onClick={() => setShowPasswordModal(false)}>×</button>
             </div>
             <div className="modal-body">
               {passwordSuccess ? (
                 <div style={{ padding: 16, textAlign: 'center', color: '#16a34a' }}>
-                  ✓ Mot de passe modifié avec succès !
+                  {t('profile.passwordChanged')}
                 </div>
               ) : (
                 <>
                   <div>
-                    <label>Ancien mot de passe</label>
+                    <label>{t('profile.oldPassword')}</label>
                     <input
                       type="password"
                       value={oldPassword}
@@ -304,7 +306,7 @@ export default function Profile() {
                     />
                   </div>
                   <div style={{ marginTop: 12 }}>
-                    <label>Nouveau mot de passe</label>
+                    <label>{t('profile.newPassword')}</label>
                     <input
                       type="password"
                       value={newPassword}
@@ -314,7 +316,7 @@ export default function Profile() {
                     />
                   </div>
                   <div style={{ marginTop: 12 }}>
-                    <label>Confirmer le nouveau mot de passe</label>
+                    <label>{t('profile.confirmNewPassword')}</label>
                     <input
                       type="password"
                       value={confirmPassword}
@@ -331,9 +333,9 @@ export default function Profile() {
                       onClick={handleForgotPassword}
                       style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 12 }}
                     >
-                      J'ai oublié mon ancien mot de passe
+                      {t('profile.forgotOldPassword')}
                     </button>
-                    <button onClick={handlePasswordChange}>Enregistrer</button>
+                    <button onClick={handlePasswordChange}>{t('common.save')}</button>
                   </div>
                 </>
               )}
@@ -342,43 +344,43 @@ export default function Profile() {
         </div>
       )}
 
-      {/* Admin rights request */}
+      {/* section to request more permissions */}
       <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Droits d'accès</h3>
+        <h3>{t('profile.accessRights')}</h3>
         <p className="muted" style={{ marginTop: 8 }}>
-          Votre niveau d'accès actuel : <strong>{role}</strong>
+          {t('profile.accessLevel')} <strong>{role}</strong>
         </p>
         <button
           onClick={() => setShowAdminDialog(true)}
           disabled={role === 'Admin'}
           style={{ marginTop: 8 }}
         >
-          Demander des droits supérieurs
+          {t('profile.requestRights')}
         </button>
       </div>
 
-      {/* Admin rights dialog */}
+      {/* popup for requesting admin rights from ur supervisor */}
       {showAdminDialog && (
         <div className="modal-backdrop" onClick={() => setShowAdminDialog(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
             <div className="modal-header">
-              <h3 style={{ margin: 0 }}>Demander des droits supérieurs</h3>
+              <h3 style={{ margin: 0 }}>{t('profile.requestRights')}</h3>
               <button className="icon-btn" onClick={() => setShowAdminDialog(false)}>×</button>
             </div>
             <div className="modal-body">
               <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--muted)' }}>
-                Trois niveaux de droits existent :
+                {t('profile.rightsLevels')}
               </p>
               <ul style={{ margin: '0 0 16px', paddingLeft: 20, fontSize: 13, color: 'var(--muted)' }}>
-                <li><strong>Read-only</strong> : Consultation des données uniquement</li>
-                <li><strong>Editor</strong> : Modification des données et paramètres</li>
-                <li><strong>Admin</strong> : Gestion complète (utilisateurs, configuration système)</li>
+                <li><strong>{t('profile.readOnly')}</strong> : {t('profile.readOnlyDesc')}</li>
+                <li><strong>{t('profile.editor')}</strong> : {t('profile.editorDesc')}</li>
+                <li><strong>{t('profile.admin')}</strong> : {t('profile.adminDesc')}</li>
               </ul>
               <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--muted)' }}>
-                Votre demande sera envoyée au supérieur indiqué pour validation.
+                {t('profile.requestSentTo')}
               </p>
               <div>
-                <label>Email du supérieur hiérarchique *</label>
+                <label>{t('profile.supervisorEmail')}</label>
                 <input
                   type="email"
                   value={adminEmail}
@@ -391,11 +393,11 @@ export default function Profile() {
                 )}
               </div>
               <div style={{ marginTop: 12 }}>
-                <label>Message (optionnel)</label>
+                <label>{t('profile.messageOptional')}</label>
                 <textarea
                   value={adminMessage}
                   onChange={(e) => setAdminMessage(e.target.value)}
-                  placeholder="Expliquez pourquoi vous avez besoin de droits supérieurs..."
+                  placeholder=""
                   style={{ width: '100%', marginTop: 4, minHeight: 80, resize: 'vertical' }}
                 />
               </div>
@@ -404,10 +406,10 @@ export default function Profile() {
                   onClick={() => setShowAdminDialog(false)}
                   style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)' }}
                 >
-                  Annuler
+                  {t('common.cancel')}
                 </button>
                 <button onClick={handleAdminRequest} disabled={adminSending}>
-                  {adminSending ? 'Envoi...' : 'Envoyer la demande'}
+                  {adminSending ? t('profile.sending') : t('profile.sendRequest')}
                 </button>
               </div>
             </div>
@@ -415,11 +417,10 @@ export default function Profile() {
         </div>
       )}
 
-      {/* Note about future UTILISATEUR table */}
+      {/* lil warning that this page is still a work in progress tbh */}
       <div className="panel" style={{ marginTop: 16, background: 'rgba(234,179,8,0.1)', borderColor: 'rgba(234,179,8,0.3)' }}>
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          <strong>Note :</strong> Cette page doit encore être connectée à la table UTILISATEUR.
-          Pour l'instant c'est que du front-end. Les champs seront persistés via PUT /api/user une fois le backend configuré.
+          <strong>Note :</strong> {t('profile.note')}
         </p>
       </div>
     </div>

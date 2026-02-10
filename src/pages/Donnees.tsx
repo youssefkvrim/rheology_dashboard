@@ -1,15 +1,16 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-// @ts-ignore - Vite raw import for testing-only ASCII art
+// @ts-ignore - vite does a lil magic to import this text file directly
 import asciiArt from '../../loading_page/ascii.txt?raw';
-import { useAppState } from '../store/appState';
+import { useBarbotineStore } from '../store/barbotineStore';
 import type { ChartMetricKey } from '../store/chartParams';
 import { fetchRheologyAll, apiHealth, exportCsv, importCsv, reportError } from '../services/api';
+import { ALL_DB_KEYS, FRONTEND_TO_DB, type DbMetricKey } from '../shared/metricKeys';
 
 type PeriodKey = '1h' | '1d' | '1w' | 'last_month' | 'last_year' | 'all' | 'custom';
 
-// Table metric keys used for the history table (API aligned)
-type TableMetricKey = 'pc' | 'viscosity' | 'density' | 'pH' | 'H2O' | 'temperature' | 'silice' | 'grain';
+// basically the same keys the database uses for each measurement type
+type TableMetricKey = DbMetricKey;
 type DayRow = Partial<Record<TableMetricKey, number>>;
 type HistoryMap = Record<string /* dayKey */, Record<string /* barbotine name */, DayRow>>;
 
@@ -35,6 +36,7 @@ const unitsByMetric: Record<ChartMetricKey, string[]> = {
   grains: ['%'],
 };
 
+// turns a timestamp into a nice YYYY-MM-DD string
 function dayKey(ts: number) {
   const d = new Date(ts);
   const yyyy = d.getFullYear();
@@ -42,11 +44,12 @@ function dayKey(ts: number) {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
+// flips YYYY-MM-DD to DD/MM/YYYY for display
 function dayKeyToLabel(key: string) {
   const [y, m, d] = key.split('-');
   return `${d}/${m}/${y}`;
 }
-// Compute Europe/Paris offset suffix (e.g., +02 or +01) for a given date
+// figures out if paris is in +01 or +02 timezone for a given date (dst is annoying tbh)
 function parisOffsetSuffix(y: number, m: number, d: number) {
   try {
     const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
@@ -62,6 +65,7 @@ function parisOffsetSuffix(y: number, m: number, d: number) {
     return '+01';
   }
 }
+// converts timestamp to the format that datetime-local inputs need
 function toLocalDateTimeInput(ts: number) {
   const d = new Date(ts);
   const yyyy = d.getFullYear();
@@ -72,11 +76,12 @@ function toLocalDateTimeInput(ts: number) {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
+// the data page - manual entry, csv import/export, and history tables all in one
 export default function Donnees() {
-  const { barbotines } = useAppState();
+  const barbotines = useBarbotineStore(s => s.barbotines);
   const navigate = useNavigate();
 
-  // Panel 1: Entrée manuelle - date range based tables
+  // manual entry section - u pick dates and edit values directly in the table
   const [manualStart, setManualStart] = useState<string>('');
   const [manualEnd, setManualEnd] = useState<string>('');
   const [manualHistoryMap, setManualHistoryMap] = useState<HistoryMap>({});
@@ -85,7 +90,7 @@ export default function Donnees() {
   const [manualChangedCells, setManualChangedCells] = useState<Record<string, boolean>>({});
   const markManualCellChanged = (key: string) => setManualChangedCells(prev => ({ ...prev, [key]: true }));
 
-  // Panel 3: Export (visuel seulement)
+  // export section - lets u download data as csv
   const [expStart, setExpStart] = useState<string>('');
   const [expEnd, setExpEnd] = useState<string>('');
   const [expAllData, setExpAllData] = useState<boolean>(false);
@@ -98,11 +103,11 @@ export default function Donnees() {
   const [expMetricsMulti, setExpMetricsMulti] = useState<ChartMetricKey[]>(['densite','viscosite','pc']);
   const [metricsOpen, setMetricsOpen] = useState<boolean>(false);
 
-  // Panel 4: Historique - start empty (user picks dates)
+  // history section - starts empty, shows data after u pick dates or hit "all"
   const now = Date.now();
   const [histStart, setHistStart] = useState<string>('');
   const [histEnd, setHistEnd] = useState<string>('');
-  // Flag to load all data once user clicks "Tout" checkbox
+  // when true we load literally everything from the db
   const [histLoadAll, setHistLoadAll] = useState<boolean>(false);
 
   const metricOrder: TableMetricKey[] = ['pc','viscosity','density','pH','H2O','temperature','silice','grain'];
@@ -120,13 +125,13 @@ export default function Donnees() {
   const [historyMap, setHistoryMap] = useState<HistoryMap>({});
   const [dayList, setDayList] = useState<string[]>([]);
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
-  // Testing-only SQL editor panel state (no DB writes). Keep track of generated SQL lines.
+  // dev-only sql preview - shows what queries would run when u edit cells
   const [sqlEdits, setSqlEdits] = useState<string[]>([]);
   const appendSql = (line: string) => setSqlEdits(prev => [...prev, line]);
-  // Track changed cells to highlight them in red
+  // keeps track of which cells got edited so we can highlight them red
   const [changedCells, setChangedCells] = useState<Record<string, boolean>>({});
   const markCellChanged = (key: string) => setChangedCells(prev => ({ ...prev, [key]: true }));
-  // TESTING ONLY: loading overlay trigger and animation
+  // dev-only: the cool loading screen overlay
   const [showLoading, setShowLoading] = useState<boolean>(false);
   const [dots, setDots] = useState<number>(0);
   const [asciiText, setAsciiText] = useState<string>('');
@@ -135,22 +140,22 @@ export default function Donnees() {
     const id = setInterval(() => setDots(d => (d + 1) % 4), 400);
     return () => clearInterval(id);
   }, [showLoading]);
+  // loads the ascii art for the loading screen - tries the server first then falls back to bundled
   useEffect(() => {
     if (!showLoading) return;
     let cancelled = false;
     (async () => {
       try {
-        // Show immediately if bundled string is available
         if (typeof asciiArt === 'string' && asciiArt.trim().length > 0) {
           setAsciiText(asciiArt);
         }
-        // Prefer public asset (served by Vite) to avoid bundling edge cases
         let txt: string | null = null;
         try {
           const res = await fetch('./loading_page/ascii.txt', { cache: 'no-store' });
           if (res.ok) txt = await res.text();
         } catch {}
         // Fallback to bundled raw import
+        // fallback to the bundled version if fetch didnt work
         if (!txt && typeof asciiArt === 'string' && asciiArt.trim().length > 0) txt = asciiArt;
         if (!cancelled) setAsciiText(txt || '');
       } catch {
@@ -159,6 +164,7 @@ export default function Donnees() {
     })();
     return () => { cancelled = true; };
   }, [showLoading]);
+  // sorts slurries: M-types first, then 2CN2, then everything else
   const sortBarbotines = (a: { name: string }, b: { name: string }) => {
     const group = (name: string) => name.startsWith('M') ? 0 : name.startsWith('2') ? 1 : 2;
     const ga = group(a.name); const gb = group(b.name);
@@ -166,7 +172,7 @@ export default function Donnees() {
     return a.name.localeCompare(b.name);
   };
 
-  // Importer CSV: file picker and tooltip controls
+  // csv import stuff - the hidden file input + hover states for the browse button
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hoverBrowse, setHoverBrowse] = useState(false);
   const [activeBrowse, setActiveBrowse] = useState(false);
@@ -174,14 +180,16 @@ export default function Donnees() {
   const [fmtTipPos, setFmtTipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [dbReachable, setDbReachable] = useState<boolean>(true);
   const openPicker = () => fileInputRef.current?.click();
+  // handles when someone drops or picks a csv file - validates, uploads, handles conflicts
   const onFiles = async (files: FileList | null) => {
     if (!files) return;
     if (!dbReachable) { alert('Base de données indisponible'); return; }
+    // only csv files under 2MB pls
     const accepted = Array.from(files).filter(f => /\.csv$/i.test(f.name) && f.size <= 2 * 1024 * 1024);
     if (!accepted.length) return;
     const file = accepted[0];
     const text = await file.text();
-    // First attempt without override
+    // try importing normally first, if theres conflicts ask the user what to do
     const res = await importCsv(text, false);
     if (!res.ok && res.conflicts && res.conflicts.length) {
       const ask = window.confirm(`Conflits sur ${res.conflicts.length} enregistrements. Écraser les existants ?`);
@@ -197,17 +205,17 @@ export default function Donnees() {
     }
   };
 
+  // pings the server to see if its alive when u open this page
   useEffect(() => {
-    // Check backend reachability at entry
     apiHealth().then(setDbReachable).catch(()=>setDbReachable(false));
   }, []);
 
-  // Only load history when dates are explicitly provided OR histLoadAll is checked
+  // loads history data - only runs when u set dates or check "load all"
   useEffect(() => {
     const s = Date.parse(histStart);
     const e = Date.parse(histEnd);
     const hasDates = Number.isFinite(s) && Number.isFinite(e);
-    // If no dates provided and not loading all, show empty state
+    // no dates and not loading all? just show nothing
     if (!hasDates && !histLoadAll) {
       setHistoryMap({});
       setDayList([]);
@@ -221,10 +229,10 @@ export default function Donnees() {
       let globalMax = Number.NEGATIVE_INFINITY;
       setLoadingHistory(true);
       try {
-        // Build per-day map
+        // groups all values by day so each row in the table = one day
         const nextMap: HistoryMap = {};
         const daysSet = new Set<string>();
-        // Order barbotines: M7-3 → 2CN2 → R55 → others
+        // same sorting as everywhere else - M7-3 first, then 2CN2, R55, etc
         const ordered = [...barbotines].sort((a,b) => {
           const group = (name: string) => name.includes('M7-3') ? 0 : name.includes('2CN2') ? 1 : name.includes('R55') ? 2 : 3;
           const ga = group(a.name); const gb = group(b.name);
@@ -235,10 +243,10 @@ export default function Donnees() {
           const sid = (b as any).slurryId as string | undefined;
           if (!sid) return;
           try {
-            const all = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O','silice','grain'], false);
+            const all = await fetchRheologyAll(sid, ALL_DB_KEYS as string[], false);
             const series = all.series || {} as Record<string, Array<{ t:number; v:number }>>;
             const perMetric: Record<string, Map<string, { t:number; v:number }>> = {};
-            for (const k of ['density','viscosity','pH','temperature','pc','H2O','silice','grain'] as const) {
+            for (const k of ALL_DB_KEYS) {
               const allArr = (series[k] || []);
               for (const d of allArr) { if (d.t < globalMin) globalMin = d.t; if (d.t > globalMax) globalMax = d.t; }
               const arr = Number.isFinite(startTs) && Number.isFinite(endTs)
@@ -247,7 +255,8 @@ export default function Donnees() {
               const m = new Map<string, { t:number; v:number }>();
               for (const d of arr) {
                 const dk = dayKey(d.t);
-                const prev = m.get(dk);
+                // if theres multiple readings in one day, keep the latest one
+              const prev = m.get(dk);
                 if (!prev || d.t > prev.t) m.set(dk, d);
               }
               perMetric[k] = m;
@@ -259,11 +268,8 @@ export default function Donnees() {
               if (!nextMap[dk]) nextMap[dk] = {};
               if (!nextMap[dk][b.name]) nextMap[dk][b.name] = {};
               const row = nextMap[dk][b.name]!;
-              // Map API keys to table metric keys
-              const mapPairs: Array<[keyof typeof perMetric, TableMetricKey]> = [
-                ['pc','pc'], ['viscosity','viscosity'], ['density','density'], ['pH','pH'], ['H2O','H2O'], ['temperature','temperature'], ['silice','silice'], ['grain','grain']
-              ];
-              for (const [src, dst] of mapPairs) {
+              for (const src of ALL_DB_KEYS) {
+                const dst = src;
                 const rec = perMetric[src].get(dk);
                 if (rec) row[dst] = Number(rec.v);
               }
@@ -271,7 +277,7 @@ export default function Donnees() {
           } catch {}
         }));
         if (cancelled) return;
-        // If loading all data and no explicit dates, auto-fill date inputs from global range
+        // if u hit "all" and didnt set dates, we figure out the range from the data itself
         if (histLoadAll && !(Number.isFinite(s) && Number.isFinite(e)) && Number.isFinite(globalMin) && Number.isFinite(globalMax)) {
           const dStart = new Date(globalMin); dStart.setHours(0,0,0,0);
           const dEnd = new Date(globalMax); dEnd.setHours(23,59,0,0);
@@ -287,7 +293,7 @@ export default function Donnees() {
       for (let t = d.getTime(); t <= end.getTime(); t += 24 * 60 * 60 * 1000) {
         const dk = dayKey(t);
         days.push(dk);
-        if (!nextMap[dk]) nextMap[dk] = {}; // ensure table exists even with no values
+        if (!nextMap[dk]) nextMap[dk] = {}; // empty row still needs to exist for the table
       }
       return days;
     })()
@@ -302,12 +308,12 @@ setDayList(sortedDays);
     return () => { cancelled = true; };
   }, [histStart, histEnd, barbotines, histLoadAll]);
 
-  // Load manual entry data based on date range
+  // fetches data for the manual entry table based on whatever dates u picked
   useEffect(() => {
     let cancelled = false;
     const s = Date.parse(manualStart);
     const e = Date.parse(manualEnd);
-    // Need at least one valid date
+    // need at least one date to do anything
     if (!Number.isFinite(s) && !Number.isFinite(e)) {
       setManualHistoryMap({});
       setManualDayList([]);
@@ -320,12 +326,12 @@ setDayList(sortedDays);
         for (const b of barbotines) {
           const sid = (b as any).slurryId as string | undefined;
           if (!sid) continue;
-          const { series } = await fetchRheologyAll(sid, ['density','viscosity','pH','temperature','pc','H2O','silice','grain'], false);
+          const { series } = await fetchRheologyAll(sid, ALL_DB_KEYS as string[], false);
           for (const [param, pts] of Object.entries(series) as [string, any[]][]) {
             const mk = param as TableMetricKey;
             for (const p of pts) {
               const t = Number(p.t);
-              // Filter by date range (either start or end can be undefined)
+              // skip points outside the date range
               if (Number.isFinite(s) && t < s) continue;
               if (Number.isFinite(e) && t > e) continue;
               const dk = dayKey(t);
@@ -350,7 +356,7 @@ setDayList(sortedDays);
     <div>
       <h2>Données</h2>
 
-      {/* Panel 1: Entrée manuelle - date range tables */}
+      {/* manual data entry - pick dates then edit cells directly */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>Entrée manuelle</h3>
         <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
@@ -403,7 +409,7 @@ setDayList(sortedDays);
                                       const newVal = ev.target.value.trim();
                                       if (newVal === String(display)) return;
                                       markManualCellChanged(cellKey);
-                                      // Generate SQL for manual entry
+                                      // builds the sql that would run for this edit
                                       const slurryId = (b as any).slurryId || b.id;
                                       const slurryType = b.name.split(' ')[0] || 'M7-3';
                                       const [yy,mm,dd] = dk.split('-').map(Number);
@@ -449,7 +455,7 @@ setDayList(sortedDays);
         )}
       </div>
 
-      {/* Panel 2: Import CSV */}
+      {/* csv upload section - drag n drop or click to browse */}
       <div className="panel" style={{ marginTop: 16, border: '2px dashed var(--border)' }}>
         <h3>Importer CSV</h3>
         <div data-slot="card-content" className="p-12" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -527,7 +533,7 @@ setDayList(sortedDays);
         </div>
       </div>
 
-      {/* Panel 3: Export */}
+      {/* export section - download ur data as csv */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>Télécharger des données</h3>
         <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
@@ -553,8 +559,7 @@ setDayList(sortedDays);
                   onChange={(e) => {
                     setExpAllData(e.target.checked);
                     if (e.target.checked) {
-                      // TODO: Fetch min/max dates from DB for selected barbotine and fill in
-                      // For now, clear dates to signal "all data"
+                      // clears dates so the server knows we want everything
                       setExpStart('');
                       setExpEnd('');
                     }
@@ -594,7 +599,7 @@ setDayList(sortedDays);
         </div>
       </div>
 
-      {/* Panel 4: Historique sous forme de tableaux */}
+      {/* history tables - all the raw data organized by day */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>Historique</h3>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -604,7 +609,7 @@ setDayList(sortedDays);
           <input type="datetime-local" placeholder="jj/mm/aaaa --:--" value={histEnd} onChange={e => { setHistEnd(e.target.value); setHistLoadAll(false); }} />
           <button
             onClick={async () => {
-              // Fetch min/max timestamps from all barbotines and fill dates
+              // grabs the earliest and latest timestamps across all slurries
               setLoadingHistory(true);
               try {
                 let minTs = Infinity;
@@ -612,8 +617,8 @@ setDayList(sortedDays);
                 for (const b of barbotines) {
                   const sid = (b as any).slurryId as string | undefined;
                   if (!sid) continue;
-                  const { series } = await fetchRheologyAll(sid, ['density'], false);
-                  const pts = series['density'] || [];
+                  const { series } = await fetchRheologyAll(sid, [FRONTEND_TO_DB.densite], false);
+                  const pts = series[FRONTEND_TO_DB.densite] || [];
                   for (const p of pts) {
                     const t = Number(p.t);
                     if (t < minTs) minTs = t;
@@ -660,7 +665,7 @@ setDayList(sortedDays);
                           {metricOrder.map(mk => {
                             const v = row[mk];
                             const display = (typeof v === 'number' && Number.isFinite(v)) ? Number(v.toFixed(3)) : '—';
-                            const editable = true; // testing-only: make cells editable
+                            const editable = true; // dev-only: all cells are editable rn
                             const cellKey = `${dk}|${b.id}|${mk}`;
                             return (
                               <td key={`c-${dk}-${b.id}-${mk}`}>
@@ -672,20 +677,17 @@ setDayList(sortedDays);
                                     onBlur={(e) => {
                                       const newValRaw = e.target.value.trim();
                                       const hadValue = typeof v === 'number' && Number.isFinite(v);
-                                      // Build identifiers
                                       const slurryId = (b as any).slurryId || b.name.replace(/\s+/g,'_');
                                       const slurryType = b.name.split(' ')[0] || 'M7-3';
-                                      // Approximate precise timestamp from date key (local noon for unambiguous tz)
+                                      // picks noon UTC as the timestamp for the day (close enough)
                                       const [yy,mm,dd] = dk.split('-').map(Number);
-                                      // Build datetimeoffset format: 2024-08-19T12:00:00.000Z (UTC)
-                                      // Convert Paris local 13:00 to UTC
                                       const parisDate = new Date(Date.UTC(yy!, mm! - 1, dd!, 12, 0, 0));
                                       const tsIso = parisDate.toISOString().replace(/\.\d{3}Z$/, '.000Z');
                                       const idSuffix = `${String(yy).slice(2)}${String(mm).padStart(2,'0')}${String(dd).padStart(2,'0')}1300002`;
                                       const paramCodeMap: Record<TableMetricKey, string> = { pc: 'p', viscosity: 'v', density: 'd', pH: 'a', H2O: 'h', temperature: 't', silice: 's', grain: 'g' };
                                       const code = paramCodeMap[mk] || 'x';
                                       const idRheology = `${slurryId}_${code}${idSuffix}`;
-                                      // Deletion: if user cleared a cell that had a value, generate DELETE for that id
+                                      // user cleared the cell = delete that record
                                       if (newValRaw === '') {
                                         if (hadValue) {
                                           const line = `DELETE FROM rheology\nWHERE id_rheology = '${idRheology}';`;
@@ -698,13 +700,13 @@ setDayList(sortedDays);
                                       const newVal = Number(newValRaw.replace(',', '.'));
                                       if (!Number.isFinite(newVal)) return;
                                       if (!hadValue) {
-                                        // INSERT template (testing-only)
+                                        // new value = insert row
                                         const unit = mk === 'pc' ? 'g' : mk === 'density' ? 'g/cm³' : mk === 'viscosity' ? 'mPa·s' : mk === 'temperature' ? '°C' : mk === 'H2O' ? 'L/h' : mk === 'silice' || mk === 'grain' ? '%' : '(-)';
                                         const line = `INSERT INTO rheology (id_rheology, id_slurry, slurry_type, timestamp, source, parameter, value, unit, usl, lsl) VALUES ('${idRheology}', '${slurryId}', '${slurryType}', '${tsIso}', 'youssef.karim', '${mk}', ${newVal.toFixed(3)}, '${unit}', NULL, NULL);`;
                                         appendSql(line);
                                         markCellChanged(cellKey);
                                       } else {
-                                        // UPDATE template (testing-only)
+                                        // already existed = just update the value
                                         const line = `UPDATE rheology\nSET value = ${newVal.toFixed(3)}\nWHERE id_rheology = '${idRheology}';`;
                                         appendSql(line);
                                         markCellChanged(cellKey);
@@ -728,7 +730,7 @@ setDayList(sortedDays);
           </div>
       </div>
 
-      {/* TESTING ONLY: SQL generation scratch panel (no DB writes) */}
+      {/* dev-only: shows the sql that would get executed (remove before prod lol) */}
       <div className="panel" style={{ marginTop: 16 }}>
         <h3>SQL code (to be removed before production)</h3>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
@@ -812,8 +814,8 @@ setDayList(sortedDays);
                     animation: 'gentlePulse 2.4s ease-in-out infinite'
                   }}
                 >{asciiText || asciiArt || 'Loading…'}</pre>
-                {/* horizontal shimmer to make animation obvious */}
-                <div style={{
+            {/* shiny sliding effect over the ascii art */}
+            <div style={{
                   pointerEvents: 'none',
                   position: 'absolute',
                   top: 0, bottom: 0,
@@ -830,7 +832,7 @@ setDayList(sortedDays);
                 </div>
               </div>
             </div>
-            {/* scanline overlay */}
+            {/* that retro scanline effect that slides down */}
             <div style={{
               pointerEvents: 'none',
               position: 'absolute',

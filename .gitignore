@@ -16,3 +16,6 @@ build/
 .env.*
 .idea/
 .vscode/
+
+# macOS resource forks
+._*

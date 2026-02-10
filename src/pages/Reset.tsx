@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { resetPasswordWithToken } from '../services/api';
 
+// page where u reset ur password using the token from the email link
 export default function Reset() {
   const [token, setToken] = useState('');
   const [pwd, setPwd] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // grabs the token from the url automatically so u dont have to paste it
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const t = q.get('token');
@@ -21,6 +23,7 @@ export default function Reset() {
           <input placeholder="Nouveau mot de passe" type="password" value={pwd} onChange={e => setPwd(e.target.value)} />
           {err && <div className="badge err">{err}</div>}
           {msg && <div className="badge ok">{msg}</div>}
+          {/* sends the token + new password to the backend to actually reset it */}
           <button disabled={busy} onClick={async () => {
             setErr(null); setMsg(null); setBusy(true);
             try {
