@@ -7,7 +7,29 @@ const cors = require('cors');
 const sql = require('mssql');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
-const argon2 = require('argon2');
+// pure-JS password hashing via Node built-in scrypt (no native deps)
+const { scrypt, randomBytes, timingSafeEqual } = crypto;
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_COST = { N: 16384, r: 8, p: 1, maxmem: 128 * 16384 * 8 * 2 };
+function scryptHash(password) {
+  return new Promise((resolve, reject) => {
+    const salt = randomBytes(16).toString('hex');
+    scrypt(password, salt, SCRYPT_KEYLEN, SCRYPT_COST, (err, dk) => {
+      if (err) return reject(err);
+      resolve(`scrypt:${salt}:${dk.toString('hex')}`);
+    });
+  });
+}
+function scryptVerify(stored, password) {
+  return new Promise((resolve, reject) => {
+    const [, salt, hash] = stored.split(':');
+    if (!salt || !hash) return resolve(false);
+    scrypt(password, salt, SCRYPT_KEYLEN, SCRYPT_COST, (err, dk) => {
+      if (err) return reject(err);
+      resolve(timingSafeEqual(Buffer.from(hash, 'hex'), dk));
+    });
+  });
+}
 const { z } = require('zod');
 
 // grabs secret keys from a hidden vault file that git doesn't know about
@@ -163,12 +185,7 @@ const resetTokens = new Map();
 async function initUserHashes() {
   for (const u of USERS) {
     if (!u.hash) {
-      u.hash = await argon2.hash(u._plaintext, {
-        type: argon2.argon2id,
-        memoryCost: 65536,  // uses 64MB of RAM to make brute force basically impossible
-        timeCost: 3,
-        parallelism: 1,
-      });
+      u.hash = await scryptHash(u._plaintext);
       // nuke the plaintext password from memory once it's hashed
       delete u._plaintext;
     }
@@ -245,7 +262,7 @@ app.post('/api/auth/login', async (req, res) => {
   const user = findUser(identifier);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
   try {
-    const valid = await argon2.verify(user.hash, password);
+    const valid = await scryptVerify(user.hash, password);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
   } catch {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -279,7 +296,7 @@ app.post('/api/auth/reset-confirm', async (req, res) => {
   }
   const user = findUser(entry.userId);
   if (!user) return res.status(400).json({ error: 'User not found' });
-  user.hash = await argon2.hash(newPassword, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
+  user.hash = await scryptHash(newPassword);
   resetTokens.delete(token);
   res.json({ ok: true });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { resetPasswordWithToken } from '../services/api';
+import { confirmPasswordReset } from '../services/api';
 
 // page where u reset ur password using the token from the email link
 export default function Reset() {
@@ -27,7 +27,7 @@ export default function Reset() {
           <button disabled={busy} onClick={async () => {
             setErr(null); setMsg(null); setBusy(true);
             try {
-              const r = await resetPasswordWithToken(token, pwd);
+              const r = await confirmPasswordReset(token, pwd);
               if (!r.ok) { setErr(r.reason || 'Échec de réinitialisation'); return; }
               setMsg('Mot de passe réinitialisé');
             } finally {

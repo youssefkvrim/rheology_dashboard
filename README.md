@@ -46,10 +46,10 @@ npm run server   # http://localhost:3001
 npm run dev      # http://localhost:5173
 ```
 
-Build and preview:
+Build and preview (Jetlab-compatible — `npm run build`/`npm run preview` do not work on Jetlab):
 ```bash
-npm run build
-npm run preview  # http://localhost:4173
+node ./node_modules/vite/bin/vite.js build
+node ./node_modules/vite/bin/vite.js preview  # http://localhost:4173
 ```
 
 ## Environment

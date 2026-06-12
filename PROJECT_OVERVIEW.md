@@ -30,7 +30,7 @@ Industrial-grade single-page dashboard to supervise ceramic slurry barbotines us
 - CSS variables (themes)
 - Node.js + Express + `mssql` (SQL Server)
 - Keycloak OIDC (frontend SSO)
-- JWT + Argon2id (backend local auth)
+- JWT + Node crypto.scrypt (backend local auth, no native deps)
 - Zod (backend input validation)
 - i18n (4 languages: fr, en, it, es)
 
@@ -55,7 +55,7 @@ src/
   repositories/
     metricsRepo.ts      # MetricsRepository interface + API impl (uses FRONTEND_TO_DB)
   services/
-    api.ts              # HTTP client for /api endpoints (JWT bearer headers)
+    api.ts              # HTTP client for /api endpoints (JWT bearer headers); hashPassword (SHA-256 via Web Crypto)
   shared/
     metricKeys.ts       # Single source of truth: FRONTEND_TO_DB, DB_TO_FRONTEND, toDbKey, toFeKey
   store/
@@ -182,7 +182,7 @@ Monolithic `appState.tsx` was replaced by 5 focused Zustand stores:
 
 ## 12. Authentication
 - **Frontend SSO**: Keycloak OIDC via `features/auth/AuthContext.tsx`.
-- **Local auth**: Backend `POST /api/auth/login` validates credentials with Argon2id (m=65536, t=3, p=4), returns JWT.
+- **Local auth**: Backend `POST /api/auth/login` validates credentials with Node built-in `crypto.scrypt` (N=16384, r=8, p=1, keylen=64), returns JWT. No native dependencies.
 - **JWT**: `Authorization: Bearer <token>` header sent on all API requests via `api.ts`. Backend `requireAuth` middleware protects write endpoints.
 - **Password reset**: Server-side tokens via `crypto.randomUUID()`, stored in memory with 15min expiry.
 - **Users**: Hardcoded in `server/index.cjs` (youssef.karim, wala.gloulou, benoit.marie, aliz.pinto-mora). Passwords hashed at server startup.
