@@ -129,8 +129,8 @@ export function ChartPanel(props: ChartPanelProps) {
           setTrendOn={setTrendOn}
           trendSegPct={trendSegPct}
           setTrendSegPct={setTrendSegPct}
-          deltaY={deltaY}
-          setDeltaY={setDeltaY}
+          deltaY={deltaY ?? 0}
+          setDeltaY={setDeltaY ?? (() => {})}
           low={bounds?.low ?? null}
           high={bounds?.high ?? null}
           setLow={setBoundsLow}

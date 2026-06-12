@@ -22,6 +22,7 @@ function mkTooltip(unit: string, metricLabel: string) {
 // the main page where u see all ur slurries at a glance
 export default function Home() {
   const t = useTranslation();
+  const STALE_MS = 30 * 24 * 60 * 60 * 1000;
   const { barbotines, addBarbotine } = useBarbotineStore();
   const { bounds, getBoundsFor, setBoundsFor } = useBoundsStore();
   const { ambient, ambientHistory } = useAmbientStore();
@@ -130,7 +131,7 @@ export default function Home() {
                   <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={dayTickFormatter} />
                   <YAxis stroke="#6b7280" domain={[15,30]} />
                   <Tooltip labelFormatter={labelDateTime} formatter={tooltipTempFormatter} />
-                  <Line type="monotone" dataKey="v" name={t('home.temperature')} stroke="#f59e0b" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="v" name={t('home.temperature')} stroke="#f59e0b" dot={false} strokeWidth={2} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -149,7 +150,7 @@ export default function Home() {
                   <XAxis dataKey="t" type="number" scale="time" domain={["auto","auto"]} stroke="#6b7280" tickFormatter={dayTickFormatter} />
                   <YAxis stroke="#6b7280" domain={[45,75]} />
                   <Tooltip labelFormatter={labelDateTime} formatter={tooltipHumidFormatter} />
-                  <Line type="monotone" dataKey="v" name={t('home.humidity')} stroke="#60a5fa" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="v" name={t('home.humidity')} stroke="#60a5fa" dot={false} strokeWidth={2} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -158,17 +159,8 @@ export default function Home() {
       </div>
       <div className="grid" style={{ marginTop: 12 }}>
         {(() => {
-          // only show slurries that actually have recent data, sorted by type
-          const withData = barbotines.filter((b) => {
-            const sid = (b as any).slurryId as string | undefined;
-            const rec = (sid && latest && latest[sid]) || {} as any;
-            const now = Date.now();
-            const within = (ms:number|undefined, windowMs:number) => (ms!=null && ms>0 && (now - ms) <= windowMs);
-            const showAny = Object.values(rec).some((r:any)=> within((r as any)?.t, 210*24*60*60*1000));
-            return dbReachable && showAny;
-          });
           // sorts M-types first, then 2CN2, then R-types, then everything else
-          const sorted = [...withData].sort((a,b) => {
+          const sorted = [...barbotines].sort((a,b) => {
             const group = (name: string) => name.startsWith('M') ? 0 : name.startsWith('2') ? 1 : name.startsWith('R') ? 2 : 3;
             const ga = group(a.name); const gb = group(b.name);
             if (ga !== gb) return ga - gb;
@@ -177,15 +169,19 @@ export default function Home() {
           const finalList = [...sorted, { id: '__new__', name: t('home.addSlurry'), online: false, last: null } as any];
           return finalList.map(b => {
           const sid = (b as any).slurryId as string | undefined;
-          const rec = (sid && latest && latest[sid]) || {} as any;
+          const rec = ((sid && latest && latest[sid]) || {}) as Record<string, { t:number; v:number; unit?: string; prevV?: number; prevT?: number }>;
           const now = Date.now();
-          const within = (ms:number|undefined, windowMs:number) => (ms!=null && ms>0 && (now - ms) <= windowMs);
-          // time windows in ms - basically how old data can be before we ignore it
-          const threeMonths = 90*24*60*60*1000; const sevenMonths = 210*24*60*60*1000; const oneYear = 365*24*60*60*1000;
           const lastD = rec[FRONTEND_TO_DB.densite] as any; const lastV = rec[FRONTEND_TO_DB.viscosite] as any; const lastPC = rec[FRONTEND_TO_DB.pc] as any; const lastH2O = rec[FRONTEND_TO_DB.h2o] as any;
-          const showD = lastD && within(lastD.t, oneYear); const showV = lastV && within(lastV.t, oneYear); const showPC = lastPC && within(lastPC.t, oneYear); const showH2O = lastH2O && within(lastH2O.t, oneYear);
-          const onlineByData = (!!rec && Object.values(rec).some((r:any)=> within((r as any)?.t, sevenMonths)));
-          const isOnline = dbReachable && onlineByData;
+          const hasValue = (r:any) => r != null && Number.isFinite(Number(r.t)) && Number(r.t) > 0;
+          const showD = hasValue(lastD); const showV = hasValue(lastV); const showPC = hasValue(lastPC); const showH2O = hasValue(lastH2O);
+          const newestTs = Object.values(rec).reduce<number | null>((max, r:any) => {
+            const tValue = Number(r?.t);
+            if (!Number.isFinite(tValue) || tValue <= 0) return max;
+            return max == null || tValue > max ? tValue : max;
+          }, null);
+          const hasData = newestTs != null;
+          const isOnline = dbReachable && newestTs != null && (now - newestTs) <= STALE_MS;
+          const badgeText = isOnline ? t('home.online') : (hasData && dbReachable ? t('home.stale') : t('home.offline'));
           const bnds = getBoundsFor(b.id);
           // checks if a value is out of bounds so we can color it red/orange/green
           function statusFromBounds(val:number|null|undefined, key:'densite'|'viscosite'|'pc'|'h2o'|'temperature'|'ph'){
@@ -218,7 +214,7 @@ export default function Home() {
             if (lv > pv) return `${ASSET_BASE}/upward.svg`; if (lv < pv) return `${ASSET_BASE}/downward.svg`; return `${ASSET_BASE}/constant.svg`;
           })();
           return (
-            <div key={b.id} className={`card card-bb`} style={{ opacity: isOnline ? 1 : 0.6, cursor: 'pointer' }} onClick={() => {
+            <div key={b.id} className={`card card-bb`} style={{ opacity: 1, cursor: 'pointer' }} onClick={() => {
               if (b.id === '__new__') { setCreateOpen(true); return; }
               // clicking any card takes u to its detail page
               navigate(`/barbotine/${encodeURIComponent(b.id)}`);
@@ -227,13 +223,18 @@ export default function Home() {
                 <h3>{b.id === '__new__' ? t('home.addSlurry') : b.name}</h3>
                 {b.id !== '__new__' && (
                   <span className="badge" style={{ background: isOnline ? 'rgba(34,197,94,0.08)' : 'rgba(148,163,184,0.08)' }}>
-                    {isOnline ? t('home.online') : t('home.offline')}
+                    {badgeText}
                   </span>
                 )}
               </div>
+              {b.id !== '__new__' && newestTs != null && (
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: -4, marginBottom: 8 }}>
+                  {t('home.lastMeasure')} {new Date(newestTs).toLocaleDateString('fr-FR')}
+                </div>
+              )}
               {b.id === '__new__' ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 42, color: 'var(--muted)' }}>+</div>
-              ) : isOnline ? (
+              ) : hasData ? (
                 <>
                   {/* density row */}
                   <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -305,5 +306,4 @@ export default function Home() {
     </div>
   );
 }
-
 

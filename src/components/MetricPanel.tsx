@@ -15,7 +15,7 @@ export type MetricPanelProps = {
   color?: string;
   trendWindowMs?: number; // only look at recent data for the trend line
   trendSegPct?: number; // how much of the x axis each trend chunk covers
-  rangeKey?: '3h' | '1d' | '7d' | '1m' | '3m' | 'all' | 'specific';
+  rangeKey?: '3h' | '1d' | '7d' | '1m' | '3m' | '6m' | '1y' | '3y' | 'all' | 'specific';
   // shows a dot that follows ur mouse along the line
   interpOn?: boolean;
   interpMode?: 'linear' | 'lagrange3';
@@ -504,4 +504,3 @@ export function MetricPanel(p: MetricPanelProps) {
     </div>
   );
 }
-

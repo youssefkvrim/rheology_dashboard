@@ -51,6 +51,8 @@ const fr = {
   'home.pressure': 'Pression',
   'home.online': 'En ligne',
   'home.offline': 'Hors ligne',
+  'home.stale': 'Données anciennes',
+  'home.lastMeasure': 'Dernière mesure',
   'home.density': 'Densité',
   'home.viscosity': 'Viscosité',
   'home.ph': 'pH',
@@ -276,6 +278,8 @@ const en: Record<TranslationKey, string> = {
   'home.pressure': 'Pressure',
   'home.online': 'Online',
   'home.offline': 'Offline',
+  'home.stale': 'Stale data',
+  'home.lastMeasure': 'Last measurement',
   'home.density': 'Density',
   'home.viscosity': 'Viscosity',
   'home.ph': 'pH',
@@ -501,6 +505,8 @@ const it: Record<TranslationKey, string> = {
   'home.pressure': 'Pressione',
   'home.online': 'Online',
   'home.offline': 'Offline',
+  'home.stale': 'Dati datati',
+  'home.lastMeasure': 'Ultima misura',
   'home.density': 'Densità',
   'home.viscosity': 'Viscosità',
   'home.ph': 'pH',
@@ -726,6 +732,8 @@ const es: Record<TranslationKey, string> = {
   'home.pressure': 'Presión',
   'home.online': 'En línea',
   'home.offline': 'Fuera de línea',
+  'home.stale': 'Datos antiguos',
+  'home.lastMeasure': 'Última medida',
   'home.density': 'Densidad',
   'home.viscosity': 'Viscosidad',
   'home.ph': 'pH',
@@ -923,4 +931,3 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
 export function getTranslation(lang: Language, key: string): string {
   return (translations[lang] as any)?.[key] ?? (translations.fr as any)?.[key] ?? key;
 }
-
