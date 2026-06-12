@@ -33,14 +33,14 @@ function useAsciiSource(): string {
 }
 
 export type LoadingProps = {
-  minMs?: number;           // how long to show this screen at minimum (3s default)
-  serverTimeoutMs?: number; // how long to wait if server is down (7s default)
+  minMs?: number;           // how long to show this screen at minimum
+  serverTimeoutMs?: number; // how long to wait if server is down
   onReady?: () => void;     // runs when the loading screen is done
   autoNavigate?: boolean;   // go to home page automatically when done?
 };
 
 // the cool loading screen with animated ascii art - shows while the app boots up
-export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady, autoNavigate = false }: LoadingProps) {
+export default function Loading({ minMs = 400, serverTimeoutMs = 4000, onReady, autoNavigate = false }: LoadingProps) {
   const navigate = useNavigate();
   const ascii = useAsciiSource();
   const baseLines = useMemo(() => ascii.split('\n'), [ascii]);
@@ -84,34 +84,35 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
     return () => clearInterval(id);
   }, [serverOk, minMs, serverTimeoutMs, done, onReady, navigate, autoNavigate]);
 
-  // swaps characters within their group to make the ascii art look animated
-  const nextChar = (ch: string, step: number): string => {
-    const gA = ['-', '=', '+'];
-    const gB = ['*', '#'];
-    const gN = ['0','1','2','3','4','5','6','7','8','9'];
-    if (gA.includes(ch)) return gA[(gA.indexOf(ch) + step) % gA.length];
-    if (gB.includes(ch)) return gB[(gB.indexOf(ch) + step) % gB.length];
-    if (gN.includes(ch)) return gN[(gN.indexOf(ch) + step) % gN.length];
-    return ch;
-  };
-
-  // creates the animated frame - each character cycles with a diagonal wave effect
-  const animatedText = useMemo(() => {
-    if (!baseLines.length) return '';
+  const frames = useMemo(() => {
+    const nextChar = (ch: string, step: number): string => {
+      const gA = ['-', '=', '+'];
+      const gB = ['*', '#'];
+      const gN = ['0','1','2','3','4','5','6','7','8','9'];
+      if (gA.includes(ch)) return gA[(gA.indexOf(ch) + step) % gA.length];
+      if (gB.includes(ch)) return gB[(gB.indexOf(ch) + step) % gB.length];
+      if (gN.includes(ch)) return gN[(gN.indexOf(ch) + step) % gN.length];
+      return ch;
+    };
+    if (!baseLines.length) return [''];
     const period = 4;
-    const linesOut: string[] = [];
-    for (let r = 0; r < baseLines.length; r++) {
-      const line = baseLines[r];
-      let out = '';
-      for (let c = 0; c < line.length; c++) {
-        const ch = line[c];
-        const offset = (frame + r + Math.floor(c / 2)) % period;
-        out += nextChar(ch, offset);
+    return Array.from({ length: period }, (_, step) => {
+      const linesOut: string[] = [];
+      for (let r = 0; r < baseLines.length; r++) {
+        const line = baseLines[r];
+        let out = '';
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c];
+          const offset = (step + r + Math.floor(c / 2)) % period;
+          out += nextChar(ch, offset);
+        }
+        linesOut.push(out);
       }
-      linesOut.push(out);
-    }
-    return linesOut.join('\n');
-  }, [baseLines, frame]);
+      return linesOut.join('\n');
+    });
+  }, [baseLines]);
+
+  const animatedText = frames[frame % 4] || '';
 
   // animation loop - runs ~11fps to keep the ascii art shifting around
   useEffect(() => {
@@ -120,12 +121,30 @@ export default function Loading({ minMs = 3000, serverTimeoutMs = 7000, onReady,
       const dt = t - lastTs.current;
       if (dt >= 90) {
         lastTs.current = t;
-        setFrame(f => (f + 1) % 4096);
+        setFrame(f => (f + 1) % 4);
       }
       rafRef.current = requestAnimationFrame(loop);
     };
-    rafRef.current = requestAnimationFrame(loop);
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+    const stop = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+    const start = () => {
+      if (!rafRef.current) rafRef.current = requestAnimationFrame(loop);
+    };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else {
+        lastTs.current = 0;
+        start();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    if (!document.hidden) start();
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      stop();
+    };
   }, []);
 
   // the "Loading..." dots animation

@@ -169,7 +169,21 @@ export default function Detail() {
     (async () => {
       try {
         const allDbKeys = Object.values(FRONTEND_TO_DB);
-        const { series, bounds: fetchedBounds } = await fetchRheologyAll(sid, allDbKeys, true);
+        const ranges = [densRange, viscRange, tempRange, phRange, pcRange, h2oRange, siliceRange, grainsRange];
+        let startTs: number | undefined;
+        let endTs: number | undefined;
+        if (ranges.every(r => r !== 'all')) {
+          const now = Date.now();
+          const parsedStart = Date.parse(specificStart);
+          const parsedEnd = Date.parse(specificEnd);
+          const starts = ranges.map(r => {
+            if (r === 'specific') return Number.isFinite(parsedStart) ? parsedStart : now - 3600e3;
+            return now - (RANGE_MS[r] || 3600e3);
+          });
+          startTs = Math.min(...starts);
+          endTs = ranges.includes('specific') && Number.isFinite(parsedEnd) ? parsedEnd : now;
+        }
+        const { series, bounds: fetchedBounds } = await fetchRheologyAll(sid, allDbKeys, true, startTs, endTs, 2000);
         if (cancelled) return;
         const toS = (d: any) => ({ t: Number(d.t), v: Number(d.v) });
         setDbSeries({
@@ -191,7 +205,7 @@ export default function Detail() {
       } catch { /* db probably down, oh well */ }
     })();
     return () => { cancelled = true; };
-  }, [sid, id]);
+  }, [sid, id, densRange, viscRange, tempRange, phRange, pcRange, h2oRange, siliceRange, grainsRange, specificStart, specificEnd]);
 
   // parses the custom date inputs into timestamps
   const specStart = useMemo(() => { const s = Date.parse(specificStart); return Number.isFinite(s) ? s : Date.now() - 3600e3; }, [specificStart]);
@@ -375,7 +389,7 @@ export default function Detail() {
                 <XAxis dataKey="time" type="number" scale="time" domain={["auto", "auto"]} tickFormatter={formatTime} stroke="#6b7280" />
                 <YAxis stroke="#6b7280" />
                 <Tooltip labelFormatter={v => formatDateTime(Number(v))} formatter={mkTooltip('g', 'Masse')} />
-                <Line type="monotone" dataKey="value" name="Masse" stroke="#38bdf8" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="value" name="Masse" stroke="#38bdf8" dot={false} strokeWidth={2} isAnimationActive={false} />
                 {(massSeries ?? []).length > 0 && <Line type="monotone" dataKey="avg" name="Average" stroke="#ef4444" dot={false} strokeDasharray="5 5" strokeWidth={1} isAnimationActive={false} />}
               </LineChart>
             </ResponsiveContainer>

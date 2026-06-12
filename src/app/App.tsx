@@ -76,12 +76,12 @@ export function App() {
     })();
   }, [theme, isAuthenticated, user?.username]);
 
-  // shows the loading screen for at least 3s, up to 7s if server is being slow
+  // shows the loading screen briefly, a bit longer if server is being slow
   if (!ready) {
-    return <Loading minMs={3000} serverTimeoutMs={7000} />;
+    return <Loading minMs={400} serverTimeoutMs={4000} />;
   }
   if (isAuthenticated && !loadingDone) {
-    return <Loading minMs={3000} serverTimeoutMs={7000} onReady={() => setLoadingDone(true)} />;
+    return <Loading minMs={400} serverTimeoutMs={4000} onReady={() => setLoadingDone(true)} />;
   }
 
   // not logged in? u only get the login page and password reset, nothing else
@@ -188,4 +188,3 @@ export function App() {
     </div>
   );
 }
-

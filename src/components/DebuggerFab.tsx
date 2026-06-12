@@ -25,10 +25,15 @@ export function DebuggerFab() {
     window.addEventListener('unhandledrejection', onRej);
     window.addEventListener('app-error', onAppErr as any);
     window.addEventListener('fetch-ok', onFetchOk as any);
-    // pings the server every 10s to see if its still alive
-    const id = setInterval(async () => {
+    const ping = async () => {
+      if (document.hidden) return;
       try { const ok = await apiHealth(); if (!cancelled) setDbReachable(ok); } catch { if (!cancelled) setDbReachable(false); }
-    }, 10000);
+    };
+    void ping();
+    // pings the server once a minute to see if its still alive
+    const id = setInterval(async () => {
+      await ping();
+    }, 60000);
     // cleanup so we dont leak event listeners when component unmounts
     return () => { cancelled = true; clearInterval(id); window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onRej); window.removeEventListener('app-error', onAppErr as any); window.removeEventListener('fetch-ok', onFetchOk as any); };
   }, []);

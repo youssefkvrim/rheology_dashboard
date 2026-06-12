@@ -90,11 +90,13 @@ export async function fetchRheologySeries(
   slurryId: string,
   parameter: 'density'|'viscosity'|'pc'|'H2O'|'temperature'|'pH'|'silice'|'grain',
   startTs?: number,
-  endTs?: number
+  endTs?: number,
+  maxPoints?: number
 ): Promise<{ t:number; v:number; unit?: string }[]> {
   const params = new URLSearchParams({ slurryId, parameter });
   if (startTs != null) params.set('start', String(startTs));
   if (endTs != null) params.set('end', String(endTs));
+  if (maxPoints != null) params.set('maxPoints', String(maxPoints));
   const res = await fetch(`${BASE}/rheology?${params.toString()}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) { reportError(`GET /rheology ${res.status}`); throw new Error(`HTTP ${res.status}`); }
   const data = await res.json();
@@ -116,9 +118,15 @@ export async function fetchLatestBounds(
 export async function fetchRheologyAll(
   slurryId: string,
   params: string[] = ['density','viscosity','pH','temperature','pc','H2O'],
-  includeBounds = true
+  includeBounds = true,
+  startTs?: number,
+  endTs?: number,
+  maxPoints?: number
 ): Promise<{ series: Record<string, { t:number; v:number; unit?: string }[]>; bounds?: { key:string; low:number|null; high:number|null }[] }> {
   const q = new URLSearchParams({ slurryId, params: params.join(','), includeBounds: includeBounds ? '1' : '0' });
+  if (startTs != null) q.set('start', String(startTs));
+  if (endTs != null) q.set('end', String(endTs));
+  if (maxPoints != null) q.set('maxPoints', String(maxPoints));
   const res = await fetch(`${BASE}/rheology/all?${q.toString()}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) { reportError(`GET /rheology/all ${res.status}`); throw new Error(`HTTP ${res.status}`); }
   return await res.json();

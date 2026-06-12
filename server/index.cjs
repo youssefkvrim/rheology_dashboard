@@ -4,9 +4,11 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const sql = require('mssql');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
+const { lttb } = require('./lib/lttb.cjs');
 // pure-JS password hashing via Node built-in scrypt (no native deps)
 const { scrypt, randomBytes, timingSafeEqual } = crypto;
 const SCRYPT_KEYLEN = 64;
@@ -38,14 +40,23 @@ dotenv.config({ path: path.resolve(process.cwd(), 'vault/secrets.env') });
 const app = express();
 // lets any frontend talk to us and caps how much data u can send
 app.use(cors());
+app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.text({ type: ['text/*', 'application/csv', 'text/csv'], limit: '10mb' }));
 
 const PORT = Number(process.env.BACKEND_PORT || 3001);
 const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
 const JWT_EXPIRY = '8h';
-const TS_EXPR = "TRY_CONVERT(datetimeoffset, REPLACE([timestamp],' ','T'))";
 const LEGACY_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}(?::?\d{2})?$/;
+let HAS_COMPUTED_COLS = false;
+
+function tsExpr() {
+  return HAS_COMPUTED_COLS ? '[ts_dto]' : "TRY_CONVERT(datetimeoffset, REPLACE([timestamp],' ','T'))";
+}
+
+function paramExpr() {
+  return HAS_COMPUTED_COLS ? '[param_norm]' : 'UPPER(LTRIM(RTRIM([parameter])))';
+}
 
 // ──────────── helpful lil utility functions ────────────
 
@@ -111,6 +122,21 @@ function warnSkippedTimestamps(n) {
   if (n > 0) console.warn('[rheology] skipped %d rows with unparseable timestamps', n);
 }
 
+function parseMaxPoints(raw) {
+  const n = Number(raw || 2000);
+  if (!Number.isFinite(n) || n <= 0) return 2000;
+  return Math.min(10000, Math.floor(n));
+}
+
+function parseEpoch(raw) {
+  const n = Number(raw || 0);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function downsampleSeries(points, maxPoints) {
+  return points.length > maxPoints ? lttb(points, maxPoints) : points;
+}
+
 // rips apart a CSV line properly - handles quotes and commas inside fields and all that mess
 function parseCsvLine(line) {
   const fields = [];
@@ -164,6 +190,10 @@ let poolLastFailure = 0;
 const POOL_MAX_RETRIES = 5;
 const POOL_CIRCUIT_OPEN_MS = 60000; // chill for 60s before trying the DB again
 
+function isDbCircuitOpen() {
+  return poolRetryCount >= POOL_MAX_RETRIES && (Date.now() - poolLastFailure) < POOL_CIRCUIT_OPEN_MS;
+}
+
 function getPool() {
   // circuit breaker - if the DB keeps failing we stop hammering it for a bit
   if (poolRetryCount >= POOL_MAX_RETRIES) {
@@ -190,6 +220,22 @@ function getPool() {
     poolPromise = delay > 0 ? new Promise(resolve => setTimeout(resolve, delay)).then(attempt) : attempt();
   }
   return poolPromise;
+}
+
+async function probeComputedColumns() {
+  try {
+    const pool = await getPool();
+    const { recordset } = await pool.request().query(`
+      SELECT
+        COL_LENGTH('rheology','ts_dto') AS ts_col,
+        COL_LENGTH('rheology','param_norm') AS param_col
+    `);
+    HAS_COMPUTED_COLS = recordset[0]?.ts_col != null && recordset[0]?.param_col != null;
+  } catch (e) {
+    HAS_COMPUTED_COLS = false;
+    console.warn('[perf] computed columns probe failed: %s', e?.message || 'error');
+  }
+  console.log(`[perf] computed columns: ${HAS_COMPUTED_COLS ? 'present' : 'absent'}`);
 }
 
 // ──────────── user accounts (hardcoded for now) ────────────
@@ -329,6 +375,7 @@ app.post('/api/auth/reset-confirm', async (req, res) => {
 
 // quick health check - just pings the DB to see if it's alive
 app.get('/api/health', async (_req, res) => {
+  if (isDbCircuitOpen()) return res.json({ ok: false, circuit: 'open' });
   try {
     await getPool();
     res.json({ ok: true });
@@ -342,7 +389,7 @@ app.get('/api/slurries', async (_req, res) => {
   try {
     const pool = await getPool();
     const { recordset: rows } = await pool.request().query(
-      `SELECT [id_slurry], MAX(${TS_EXPR}) as ts
+      `SELECT [id_slurry], MAX(${tsExpr()}) as ts
        FROM [rheology]
        GROUP BY [id_slurry]
        ORDER BY [id_slurry]`
@@ -375,11 +422,20 @@ app.get('/api/rheology/latest-all', async (req, res) => {
     const slurryPlaceholders = slurries.map((_, i) => `@s${i}`).join(',');
     const paramPlaceholders = normParams.map((_, i) => `@p${i}`).join(',');
     const q = `
-      SELECT [id_slurry], [parameter], [timestamp], [value], [unit]
-      FROM [rheology]
-      WHERE [id_slurry] IN (${slurryPlaceholders})
-        AND UPPER(LTRIM(RTRIM([parameter]))) IN (${paramPlaceholders})
-      ORDER BY ${TS_EXPR} DESC`;
+      WITH ranked AS (
+        SELECT [id_slurry], [parameter], [timestamp], [value], [unit],
+               ROW_NUMBER() OVER (
+                 PARTITION BY [id_slurry], ${paramExpr()}
+                 ORDER BY ${tsExpr()} DESC
+               ) AS rn
+        FROM [rheology]
+        WHERE [id_slurry] IN (${slurryPlaceholders})
+          AND ${paramExpr()} IN (${paramPlaceholders})
+      )
+      SELECT [id_slurry], [parameter], [timestamp], [value], [unit], rn
+      FROM ranked
+      WHERE rn <= 2
+      ORDER BY [id_slurry], [parameter], rn`;
     const request = pool.request();
     slurries.forEach((v, i) => request.input(`s${i}`, sql.VarChar(64), v));
     normParams.forEach((v, i) => request.input(`p${i}`, sql.VarChar(32), v));
@@ -392,9 +448,9 @@ app.get('/api/rheology/latest-all', async (req, res) => {
       const ms = toMs(r.timestamp);
       if (!Number.isFinite(ms)) { skipped++; continue; }
       out[sid] = out[sid] || {};
-      // first hit = latest value, second hit = the one before it (for trend arrows)
-      if (!out[sid][p]) out[sid][p] = { t: ms, v: Number(r.value), unit: r.unit || undefined };
-      else if (out[sid][p] && out[sid][p].prevV == null) {
+      if (Number(r.rn) === 1 || !out[sid][p]) {
+        out[sid][p] = { t: ms, v: Number(r.value), unit: r.unit || undefined };
+      } else if (Number(r.rn) === 2 && out[sid][p] && out[sid][p].prevV == null) {
         out[sid][p].prevV = Number(r.value);
         out[sid][p].prevT = ms;
       }
@@ -413,17 +469,25 @@ app.get('/api/rheology/all', async (req, res) => {
     const paramsCsv = String(req.query.params || 'density,viscosity,pH,temperature,pc,H2O');
     const params = paramsCsv.split(',').map(s => s.trim()).filter(Boolean);
     const includeBounds = String(req.query.includeBounds || '') === '1';
+    const start = parseEpoch(req.query.start);
+    const end = parseEpoch(req.query.end);
+    const maxPoints = parseMaxPoints(req.query.maxPoints);
     if (!slurryId || !params.length) return res.json({});
     const normParams = params.map(p => p.trim().toUpperCase());
     const pool = await getPool();
     const placeholders = normParams.map((_, i) => `@p${i}`).join(',');
+    let whereTime = '';
+    if (start != null) whereTime += ` AND ${tsExpr()} >= @start`;
+    if (end != null) whereTime += ` AND ${tsExpr()} <= @end`;
     const q = `
       SELECT [timestamp], [value], [unit], [parameter]
       FROM [rheology]
-      WHERE [id_slurry]=@slurryId AND UPPER(LTRIM(RTRIM([parameter]))) IN (${placeholders})
-      ORDER BY ${TS_EXPR} ASC`;
+      WHERE [id_slurry]=@slurryId AND ${paramExpr()} IN (${placeholders})${whereTime}
+      ORDER BY ${tsExpr()} ASC`;
     const request = pool.request();
     request.input('slurryId', sql.VarChar(64), slurryId);
+    if (start != null) request.input('start', sql.DateTimeOffset, new Date(start));
+    if (end != null) request.input('end', sql.DateTimeOffset, new Date(end));
     normParams.forEach((v, i) => request.input(`p${i}`, sql.VarChar(32), v));
     const { recordset: rows } = await request.query(q);
     const map = {};
@@ -435,6 +499,9 @@ app.get('/api/rheology/all', async (req, res) => {
       if (!map[key]) map[key] = [];
       map[key].push({ t: ms, v: Number(r.value), unit: r.unit || undefined });
     }
+    for (const key of Object.keys(map)) {
+      map[key] = downsampleSeries(map[key], maxPoints);
+    }
     warnSkippedTimestamps(skipped);
     if (includeBounds) {
       // grabs the most recent upper/lower limits for each parameter
@@ -443,7 +510,7 @@ app.get('/api/rheology/all', async (req, res) => {
       const { recordset: brows } = await rq.query(
         `WITH ranked AS (
            SELECT [parameter], [usl], [lsl], [timestamp],
-                  ROW_NUMBER() OVER (PARTITION BY [parameter] ORDER BY ${TS_EXPR} DESC) as rn
+                  ROW_NUMBER() OVER (PARTITION BY ${paramExpr()} ORDER BY ${tsExpr()} DESC) as rn
            FROM [rheology] WHERE [id_slurry]=@slurryId AND ([usl] IS NOT NULL OR [lsl] IS NOT NULL)
          )
          SELECT [parameter], [usl], [lsl] FROM ranked WHERE rn=1`
@@ -469,7 +536,7 @@ app.get('/api/rheology/bounds', async (req, res) => {
     const { recordset: rows } = await rq.query(
       `WITH ranked AS (
          SELECT [parameter], [usl], [lsl], [timestamp],
-                ROW_NUMBER() OVER (PARTITION BY [parameter] ORDER BY ${TS_EXPR} DESC) as rn
+                ROW_NUMBER() OVER (PARTITION BY ${paramExpr()} ORDER BY ${tsExpr()} DESC) as rn
          FROM [rheology] WHERE [id_slurry]=@slurryId AND ([usl] IS NOT NULL OR [lsl] IS NOT NULL)
        )
        SELECT [parameter], [usl], [lsl] FROM ranked WHERE rn=1`
@@ -486,16 +553,22 @@ app.get('/api/rheology', async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
     const parameter = String(req.query.parameter || '');
+    const start = parseEpoch(req.query.start);
+    const end = parseEpoch(req.query.end);
+    const maxPoints = parseMaxPoints(req.query.maxPoints);
     if (!slurryId || !parameter) return res.json([]);
     const pool = await getPool();
     const rq = pool.request();
     rq.input('slurryId', sql.VarChar(64), slurryId);
     rq.input('parameter', sql.VarChar(32), parameter.trim().toUpperCase());
+    let whereTime = '';
+    if (start != null) { rq.input('start', sql.DateTimeOffset, new Date(start)); whereTime += ` AND ${tsExpr()} >= @start`; }
+    if (end != null) { rq.input('end', sql.DateTimeOffset, new Date(end)); whereTime += ` AND ${tsExpr()} <= @end`; }
     const { recordset: rows } = await rq.query(
       `SELECT [timestamp], [value], [unit]
        FROM [rheology]
-       WHERE [id_slurry]=@slurryId AND UPPER(LTRIM(RTRIM([parameter])))=@parameter
-       ORDER BY ${TS_EXPR} ASC`
+       WHERE [id_slurry]=@slurryId AND ${paramExpr()}=@parameter${whereTime}
+       ORDER BY ${tsExpr()} ASC`
     );
     let skipped = 0;
     const out = [];
@@ -505,7 +578,7 @@ app.get('/api/rheology', async (req, res) => {
       out.push({ t: ms, v: Number(r.value), unit: r.unit || undefined });
     }
     warnSkippedTimestamps(skipped);
-    res.json(out);
+    res.json(downsampleSeries(out, maxPoints));
   } catch (e) {
     res.status(500).json({ error: e?.message || 'error' });
   }
@@ -525,7 +598,7 @@ app.get('/api/alerts/latest', async (req, res) => {
     const { recordset: latestRows } = await rq.query(`
       WITH cte AS (
         SELECT [id_slurry],[parameter],[timestamp],[value],[unit],
-               ROW_NUMBER() OVER (PARTITION BY [id_slurry],[parameter] ORDER BY ${TS_EXPR} DESC) AS rn
+               ROW_NUMBER() OVER (PARTITION BY [id_slurry],${paramExpr()} ORDER BY ${tsExpr()} DESC) AS rn
         FROM [rheology]
         WHERE [id_slurry] IN (${slurryPlaceholders})
       )
@@ -538,7 +611,7 @@ app.get('/api/alerts/latest', async (req, res) => {
     const { recordset: boundRows } = await rq2.query(`
       WITH b AS (
         SELECT [id_slurry],[parameter],[usl],[lsl],
-               ROW_NUMBER() OVER (PARTITION BY [id_slurry],[parameter] ORDER BY ${TS_EXPR} DESC) AS rn
+               ROW_NUMBER() OVER (PARTITION BY [id_slurry],${paramExpr()} ORDER BY ${tsExpr()} DESC) AS rn
         FROM [rheology]
         WHERE [id_slurry] IN (${slurryPlaceholders})
       )
@@ -597,7 +670,6 @@ app.get('/api/user-prefs', async (req, res) => {
   try {
     const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
     if (!userId) return res.status(400).json({ error: 'userId required' });
-    await ensureUserPrefsTable();
     const pool = await getPool();
     const rq = pool.request();
     rq.input('u', sql.NVarChar(128), userId);
@@ -619,7 +691,6 @@ app.put('/api/user-prefs', requireAuth, async (req, res) => {
     const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
     if (!userId) return res.status(400).json({ error: 'userId required' });
     const prefs = req.body?.prefs ?? null;
-    await ensureUserPrefsTable();
     const pool = await getPool();
     const rq = pool.request();
     rq.input('u', sql.NVarChar(128), userId);
@@ -708,13 +779,13 @@ app.get('/api/rheology/export-csv', async (req, res) => {
     rq.input('slurryId', sql.VarChar(64), slurryId);
     // optionally filter by time range if start/end are given
     let whereTime = '';
-    if (Number.isFinite(start) && start > 0) { rq.input('start', sql.DateTimeOffset, new Date(start)); whereTime += ` AND ${TS_EXPR} >= @start`; }
-    if (Number.isFinite(end) && end > 0) { rq.input('end', sql.DateTimeOffset, new Date(end)); whereTime += ` AND ${TS_EXPR} <= @end`; }
+    if (Number.isFinite(start) && start > 0) { rq.input('start', sql.DateTimeOffset, new Date(start)); whereTime += ` AND ${tsExpr()} >= @start`; }
+    if (Number.isFinite(end) && end > 0) { rq.input('end', sql.DateTimeOffset, new Date(end)); whereTime += ` AND ${tsExpr()} <= @end`; }
     const q = `
       SELECT [id_rheology], [id_slurry], [slurry_type], [timestamp], [source], [parameter], [value], [unit], [usl], [lsl]
       FROM [rheology]
       WHERE [id_slurry]=@slurryId${whereTime}
-      ORDER BY ${TS_EXPR} ASC`;
+      ORDER BY ${tsExpr()} ASC`;
     const { recordset: rows } = await rq.query(q);
     const hdr = 'id_rheology,id_slurry,slurry_type,timestamp,source,parameter,value,unit,usl,lsl';
 
@@ -885,9 +956,10 @@ app.post('/api/rheology/import-csv', requireAuth, async (req, res) => {
 
 const distDir = path.join(process.cwd(), 'dist');
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
+  app.use(express.static(distDir, { maxAge: '30d', immutable: true, index: false }));
   // any route that's not /api/* gets the frontend - classic SPA trick
   app.get(/^(?!\/api\/).*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(distDir, 'index.html'));
   });
 }
@@ -896,6 +968,12 @@ if (fs.existsSync(distDir)) {
 
 (async () => {
   await initUserHashes();
+  await probeComputedColumns();
+  try {
+    await ensureUserPrefsTable();
+  } catch (e) {
+    console.warn('[prefs] user_prefs bootstrap skipped: %s', e?.message || 'error');
+  }
   app.listen(PORT, () => {
     console.log(`[server] SQL Server API listening on ${PORT}`);
   });
