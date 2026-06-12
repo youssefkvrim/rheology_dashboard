@@ -55,7 +55,7 @@ src/
   repositories/
     metricsRepo.ts      # MetricsRepository interface + API impl (uses FRONTEND_TO_DB)
   services/
-    api.ts              # HTTP client for /api endpoints (JWT bearer headers); hashPassword (SHA-256 via Web Crypto)
+    api.ts              # HTTP client for /api endpoints (JWT bearer headers where required)
   shared/
     metricKeys.ts       # Single source of truth: FRONTEND_TO_DB, DB_TO_FRONTEND, toDbKey, toFeKey
   store/
@@ -70,9 +70,17 @@ src/
   utils/
     units.ts            # Unit conversion utilities
   pages/                # Page components (Home, Detail, Donnees, etc.)
-  app.css               # Styles
+  styles/
+    app.css             # Main styles and Poppins @font-face declarations
+    index.css           # Minimal global entry styles
 server/
   index.cjs             # Express API: JWT auth, Zod validation, circuit breaker, MERGE import
+db/
+  migrations/           # Human-applied SQL migration scripts
+docs/
+  assets/               # Documentation screenshots and demo media
+public/
+  fonts/Poppins/        # Runtime Poppins fonts
 vault/
   secrets.env           # DB credentials, JWT_SECRET (gitignored)
 ```
@@ -109,7 +117,8 @@ Monolithic `appState.tsx` was replaced by 5 focused Zustand stores:
 
 ## 7. Pages
 ### Home (`src/pages/Home.tsx`)
-- Ambient mini-cards; barbotine cards with latest values and trend; online derived from recency and DB reachability.
+- Ambient mini-cards; barbotine cards with latest values and trend.
+- Cards remain visible when data is old. Values display when present with a valid timestamp; measurements older than 30 days are labeled as stale.
 - Create barbotine dialog. All text uses `t()`.
 
 ### Detail (`src/pages/Detail.tsx`)
@@ -138,7 +147,7 @@ Monolithic `appState.tsx` was replaced by 5 focused Zustand stores:
 - X axis is time; tooltips show local date/time.
 - Critical zones (%) shade near bounds; single-bound cases supported.
 
-## 9. Styling (`src/app.css`)
+## 9. Styling (`src/styles/app.css`)
 - CSS variables for theme palette. Poppins font (Regular, Medium, SemiBold, Bold only).
 - Layout primitives: `.grid`, `.row`, `.panel`, `.card`, `.badge`, `.chart`, `.segmented`.
 - Modal: `.modal-backdrop`, `.modal`, `.modal-header`, `.modal-body`.
@@ -158,6 +167,7 @@ Monolithic `appState.tsx` was replaced by 5 focused Zustand stores:
 - **Input validation**: Zod schemas on all endpoints.
 - **CSV parsing**: RFC 4180 compliant (handles quoted fields with commas).
 - **CSV import**: Bulk insert into temp table + single MERGE statement (not row-by-row).
+- **Timestamps**: Read queries order with `TRY_CONVERT(datetimeoffset, REPLACE([timestamp],' ','T'))`; API responses skip unparseable timestamps rather than emitting `t: 0`.
 - **`toNormKey`**: Single module-scope utility for parameter normalization.
 - **`toFrontendKey`**: Reverse mapping DB → frontend French keys.
 
@@ -184,7 +194,7 @@ Monolithic `appState.tsx` was replaced by 5 focused Zustand stores:
 - **Frontend SSO**: Keycloak OIDC via `features/auth/AuthContext.tsx`.
 - **Local auth**: Backend `POST /api/auth/login` validates credentials with Node built-in `crypto.scrypt` (N=16384, r=8, p=1, keylen=64), returns JWT. No native dependencies.
 - **JWT**: `Authorization: Bearer <token>` header sent on all API requests via `api.ts`. Backend `requireAuth` middleware protects write endpoints.
-- **Password reset**: Server-side tokens via `crypto.randomUUID()`, stored in memory with 15min expiry.
+- **Password reset**: Server-side tokens via `crypto.randomUUID()`, stored in memory with 15min expiry. Phase 4 still needs to remove token leakage from reset-request responses.
 - **Users**: Hardcoded in `server/index.cjs` (youssef.karim, wala.gloulou, benoit.marie, aliz.pinto-mora). Passwords hashed at server startup.
 - **Secrets**: `JWT_SECRET` in `vault/secrets.env`.
 
@@ -204,7 +214,7 @@ Monolithic `appState.tsx` was replaced by 5 focused Zustand stores:
 
 ## Appendix
 ### CSV Import
-See `docs/CSV.md` for format and validation rules.
+See `CSV.md` for format and validation rules.
 
 ### SQL Schema
-See `docs/SQL.md` for table definition, `id_rheology` encoding, and timestamp policy.
+See `SQL.md` for table definition, `id_rheology` encoding, and timestamp policy.

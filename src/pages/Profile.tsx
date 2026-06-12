@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '../features/auth/AuthContext';
-import { hashPassword } from '../services/api';
 import { useTranslation } from '../i18n';
 
 export default function Profile() {
@@ -113,8 +112,8 @@ export default function Profile() {
     alert('Modifications enregistrées (simulation). Connecter au backend UTILISATEUR pour persistance.');
   };
 
-  // checks if the passwords match and all that, then hashes it
-  const handlePasswordChange = async () => {
+  // checks if the passwords match; backend password-change wiring is still pending
+  const handlePasswordChange = () => {
     setPasswordError('');
     if (!newPassword || !confirmPassword) {
       setPasswordError(t('profile.fillAllFields'));
@@ -129,21 +128,15 @@ export default function Profile() {
       return;
     }
 
-    try {
-      const hashedPassword = await hashPassword(newPassword);
-      console.log('New password hash:', hashedPassword);
-      setPasswordSuccess(true);
-      // waits 2s so u can see the success msg then closes the modal
-      setTimeout(() => {
-        setShowPasswordModal(false);
-        setOldPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setPasswordSuccess(false);
-      }, 2000);
-    } catch (err) {
-      setPasswordError(t('profile.passwordChangeError'));
-    }
+    setPasswordSuccess(true);
+    // waits 2s so u can see the success msg then closes the modal
+    setTimeout(() => {
+      setShowPasswordModal(false);
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordSuccess(false);
+    }, 2000);
   };
 
   const handleForgotPassword = () => {

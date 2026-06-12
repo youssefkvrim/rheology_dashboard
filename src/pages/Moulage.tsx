@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n';
 // @ts-ignore
-import asciiRaw from '../../loading_page/ascii.txt?raw';
+import asciiRaw from '../../public/loading_page/ascii.txt?raw';
 
 // tries to load the ascii art from the server, if that fails uses the bundled one, worst case just shows "SAFRAN"
 function useAsciiSource(): string {

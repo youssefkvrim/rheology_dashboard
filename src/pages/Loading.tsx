@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiHealth } from '../services/api';
 // backup ascii art in case the server one doesnt load
 // @ts-ignore
-import asciiRaw from '../../loading_page/ascii.txt?raw';
+import asciiRaw from '../../public/loading_page/ascii.txt?raw';
 
 // tries to load the ascii art text - server first, bundled file as backup
 function useAsciiSource(): string {

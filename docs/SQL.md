@@ -56,8 +56,14 @@ Example: `M7-3_006_v2510101300002`
 ## Timestamp Policy
 - Store human-readable local time with explicit offset: `YYYY-MM-DDTHH:MM:SS+ZZ` (e.g., `2024-08-14T13:00:00+02`).
 - Europe/Paris offset (`+01`/`+02`) should reflect the correct DST for that date.
+- Server writes from `POST /api/rheology/point` and CSV import bind timestamps as `VARCHAR(32)` and normalize parseable non-legacy values back to this format.
+- Server reads sort through `TRY_CONVERT(datetimeoffset, REPLACE([timestamp],' ','T'))` so legacy and SQL Server DATETIMEOFFSET-stringified rows order consistently.
+- Rows with unparseable timestamps are skipped in API time-series responses and counted in server warnings instead of being emitted as `t: 0`.
+
+## Phase 0 Diagnostic Status
+- Documented expected type: `timestamp VARCHAR(32)`.
+- Local verification on 2026-06-12 was blocked because this workspace could not resolve the configured SQL Server host. The actual Jetlab `sys.columns` and min/max timestamp evidence still needs to be collected on the Jetlab network; see `../EXECUTION_LOG.md`.
 
 ## Notes
-- The dashboard performs only read operations against SQL endpoints.
-- CSV Import UI on the Données page is visual-only. Future server-side parsing should expect the table structure above.
-
+- The dashboard currently reads from SQL and supports authenticated point writes / CSV import through the backend.
+- Migration scripts in `../db/migrations/` are human-applied only.

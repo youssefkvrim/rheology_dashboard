@@ -2,7 +2,7 @@
 
 Vite + React + TypeScript dashboard for barbotine monitoring against a SQL Server backend exposed under `/api`. The app targets real data only.
 
-![Dashboard Demo](assets/demo-dashboard.gif)
+![Dashboard Demo](docs/assets/demo-dashboard.gif)
 
 ## Contents
 - Overview
@@ -12,19 +12,21 @@ Vite + React + TypeScript dashboard for barbotine monitoring against a SQL Serve
 - Features
 - CSV import/export
 - Deployment notes
+- Project structure
 - License
 
 ## Overview
-- Frontend: React 18 + Vite 7, Recharts, React Router.
+- Frontend: React 18 + Vite 7, Recharts, React Router, Zustand.
 - Backend: Node.js + Express + `mssql` (read/write). Serves:
   - `/api/rheology/*` for time series, bounds, export/import.
   - `/api/slurries` to list available barbotines (distinct `id_slurry`).
   - `/api/user-prefs` to persist user preferences (bounds, theme).
   - `/api/alerts/latest` for server-side alert evaluation.
-- Auth: Keycloak OIDC (frontend) for user identity; backend endpoints designed to accept a bearer token when server-side auth is enabled.
+- Auth: Keycloak OIDC is wired on the frontend. Local backend auth uses JWT plus Node `crypto.scrypt`; hardcoded backend users remain until the Phase 4 users-table migration.
+- Data freshness: Home keeps available values visible regardless of age and labels old measurements as stale.
 
 ## Run locally
-Prerequisites: Node.js ≥ 18, SQL Server (reachable) and valid credentials.
+Prerequisites: Node.js `^20.19.0 || >=22.12.0`, SQL Server (reachable) and valid credentials.
 
 macOS:
 ```bash
@@ -46,10 +48,10 @@ npm run server   # http://localhost:3001
 npm run dev      # http://localhost:5173
 ```
 
-Build and preview (Jetlab-compatible — `npm run build`/`npm run preview` do not work on Jetlab):
+Build and run the production app:
 ```bash
 node ./node_modules/vite/bin/vite.js build
-node ./node_modules/vite/bin/vite.js preview  # http://localhost:4173
+node server/index.cjs  # serves dist/ and /api on http://localhost:3001
 ```
 
 ## Environment
@@ -64,6 +66,7 @@ MSSQL_PASSWORD=YOUR_PASS
 MSSQL_PORT=1433
 MSSQL_ENCRYPT=true
 MSSQL_TRUST_CERT=true
+JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET
 ```
 
 Frontend (`.env.local` optional):
@@ -99,8 +102,32 @@ VITE_WHITELIST_WRITE=...
   - Frontend upload is enabled only when DB is reachable.
 
 ## Deployment notes
-- Behind reverse proxies, ensure `/api/*` routes the Node backend; all other routes fall back to `index.html`.
-- Configure env as above. For Jetlab or other environments, expose 3001 internally and forward `/api` to it.
+- Jetlab must run the Express process, not the Vite dev/preview server. See `docs/DEPLOY_JETLAB.md`.
+- Build with `node ./node_modules/vite/bin/vite.js build`, then run `node server/index.cjs`.
+- The Express server serves both `dist/` and `/api/*` on `BACKEND_PORT` (default `3001`). Point the Jetlab proxy/route to port `3001`.
+
+## Project structure
+```
+src/
+  app/                 App shell and routes
+  assets/              Reserved for future source assets
+  components/          Shared UI/chart components
+  features/auth/       Keycloak and auth context
+  i18n/                fr/en/it/es translations
+  pages/               Route pages
+  repositories/        Data repository interfaces
+  services/            API client
+  shared/              Metric key mappings
+  store/               Zustand stores
+  styles/              app.css and index.css
+  types/               Domain types
+  utils/               Unit helpers
+server/
+  index.cjs            Express API and static server
+db/migrations/         Human-applied SQL scripts
+docs/assets/           README and documentation media
+public/                Runtime public assets and fonts
+```
 
 ## License
 This project is proprietary.

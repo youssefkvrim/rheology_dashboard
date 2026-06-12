@@ -10,7 +10,7 @@ import Support from '../pages/Support';
 import Login from '../pages/Login';
 import Reset from '../pages/Reset';
 import Loading from '../pages/Loading';
-import '../app.css';
+import '../styles/app.css';
 import { useAuth } from '../features/auth/AuthContext';
 import { getUserPrefs, putUserPrefs, apiHealth, ASSET_BASE } from '../services/api';
 import { useBarbotineStore } from '../store/barbotineStore';
@@ -188,5 +188,4 @@ export function App() {
     </div>
   );
 }
-
 

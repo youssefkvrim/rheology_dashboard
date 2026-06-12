@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 // @ts-ignore - vite does a lil magic to import this text file directly
-import asciiArt from '../../loading_page/ascii.txt?raw';
+import asciiArt from '../../public/loading_page/ascii.txt?raw';
 import { useBarbotineStore } from '../store/barbotineStore';
 import type { ChartMetricKey } from '../store/chartParams';
 import { fetchRheologyAll, apiHealth, exportCsv, importCsv, reportError } from '../services/api';
@@ -846,4 +846,3 @@ setDayList(sortedDays);
     </div>
   );
 }
-

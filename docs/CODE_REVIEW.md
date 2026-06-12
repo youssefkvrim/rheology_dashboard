@@ -1,5 +1,7 @@
 # Code Review — Post-Refactor Status
 
+> Historical document — superseded by ENGINEERING_DIRECTIVES.md
+
 Scope: status of all findings from the initial audit after the industrial refactoring pass.
 
 ## Resolved findings

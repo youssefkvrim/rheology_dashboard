@@ -7,7 +7,7 @@ import { AuthProvider } from './features/auth/AuthContext';
 import { I18nProvider } from './i18n';
 import { useBarbotineStore } from './store/barbotineStore';
 import { useBoundsStore } from './store/boundsStore';
-import './index.css';
+import './styles/index.css';
 
 // figures out the base url path, needed when the app runs behind a proxy
 function getBasename(): string {
