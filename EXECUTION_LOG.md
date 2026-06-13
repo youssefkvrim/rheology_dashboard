@@ -15,6 +15,7 @@
 - T3.7 mssql 11 upgrade — done with DB limitation — installed `mssql@11.0.1`. Reviewed pool config keys and CSV bulk-import code path (`new sql.Table`, `request.bulk(table)`); no shape changes were needed. `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed. Runtime smoke: escalated `node server/index.cjs` booted and served `/` with HTTP 200; `/api/health` reached the driver path and returned the existing local SQL DNS 500. Bulk import against a test table could not be verified because no reachable SQL Server/test table is available from this workspace.
 - T3.8 Keycloak 26 upgrade — done — installed `keycloak-js@26.2.4`. Reviewed auth usage and confirmed it is limited to constructor config plus `init`, `login`, `logout`, `tokenParsed`, and `token`. `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed; chunks remain below 500 kB. Runtime smoke: escalated `node server/index.cjs` served `/` with HTTP 200; `/api/health` returned the existing local SQL DNS 500.
 - T3.9 Node type pin — done — installed `@types/node@22.19.21`. `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed; runtime smoke served `/` with HTTP 200 and `/api/health` returned the existing local SQL DNS 500.
+- T3.10 Production audit — done — sandboxed `npm audit --omit=dev` failed because registry DNS was blocked; reran with network approval and it returned `found 0 vulnerabilities`. No `npm audit fix` was needed.
 
 ## 2026-06-12
 
