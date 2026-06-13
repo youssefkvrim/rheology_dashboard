@@ -1,5 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ErrorBar, ReferenceLine, ReferenceDot } from 'recharts';
+import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ErrorBar, ReferenceLine, ReferenceDot } from 'recharts';
+import { ChartTooltip, type ChartTooltipInfo, type TrendMeta } from './chart/ChartTooltip';
+import { CriticalZones } from './chart/CriticalZones';
 
 // the actual chart that draws the lines, zones, trends etc
 export type MetricPanelProps = {
@@ -197,7 +199,7 @@ export function MetricPanel(p: MetricPanelProps) {
 
   // calculates the trend line (the dashed black line that shows if things are going up or down)
   const { trendPolyline, trendMeta } = useMemo(() => {
-    const empty = { trendPolyline: null as null | Array<{ t:number; trend:number }>, trendMeta: [] as Array<{ start:number; end:number; m:number }> };
+    const empty = { trendPolyline: null as null | Array<{ t:number; trend:number }>, trendMeta: [] as TrendMeta[] };
     if (!p.trendOn || p.data.length < 2) return empty;
     const nowMax = p.data[p.data.length - 1].t;
     // only look at data within the trend window if one is set
@@ -220,7 +222,7 @@ export function MetricPanel(p: MetricPanelProps) {
     const total = Math.max(1, t1 - t0);
     const segWidth = Math.max(1, Math.floor((pct / 100) * total));
     const poly: Array<{ t:number; trend:number }> = [];
-    const meta: Array<{ start:number; end:number; m:number }> = [];
+    const meta: TrendMeta[] = [];
     for (let s = t0; s < t1; s += segWidth) {
       const e = Math.min(t1, s + segWidth);
       const part = series.filter(d => d.t >= s && d.t <= e);
@@ -357,47 +359,22 @@ export function MetricPanel(p: MetricPanelProps) {
 
   // custom tooltip that shows up when u hover over the chart
   const customTooltip = useMemo(() => {
-    return (info: any) => {
-      const { active, payload, label } = info || {};
-      if (!active || !payload || !payload.length) return null;
-      const ts = p.interpOn && hoverTs != null ? (hoverTs as number) : Number(label ?? payload[0]?.payload?.t ?? 0);
-      // tells u if the trend is going up, down, or sideways
-      let trendLabel = '';
-      if (p.trendOn && trendMeta && trendMeta.length) {
-        const seg = trendMeta.find(s => ts >= s.start && ts <= s.end) || trendMeta[trendMeta.length - 1];
-        if (seg) {
-          if (seg.m > 0) trendLabel = 'Tendance : Haussière';
-          else if (seg.m < 0) trendLabel = 'Tendance : Baissière';
-          else trendLabel = 'Tendance : Horizontale';
-        }
-      }
-      const dateStr = new Date(ts).toLocaleString();
-      if (p.interpOn) {
-        const vy = interpolateAt(ts, p.interpMode || 'linear');
-        const valueStr = vy != null ? `${p.title} : ${formatTick(vy)} ${p.unitLabel}`.trim() : '';
-        const avgStr = '';
-        return (
-          <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
-            <div>{dateStr}</div>
-            {valueStr && <div style={{ color: p.color || '#22c55e' }}>{valueStr}</div>}
-            {trendLabel && <div style={{ color: '#111827' }}>{trendLabel}</div>}
-          </div>
-        );
-      } else {
-        const valueEntry = payload.find((e:any)=> e && e.dataKey === 'v');
-        const p0 = valueEntry?.payload || payload[0]?.payload;
-        const valueStr = p0 && typeof p0.v === 'number' ? `${p.title} : ${formatTick(p0.v)} ${p.unitLabel}`.trim() : '';
-        const avgStr = (p.avgOn && p0 && typeof p0.avg === 'number') ? `Moyenne : ${formatTick(p0.avg)} ${p.unitLabel}`.trim() : '';
-        return (
-          <div className="recharts-default-tooltip" style={{ background: 'var(--panel)', border: '1px solid var(--border)', padding: 8 }}>
-            <div>{dateStr}</div>
-            {valueStr && <div style={{ color: p.color || '#22c55e' }}>{valueStr}</div>}
-            {avgStr && <div style={{ color: '#ef4444' }}>{avgStr}</div>}
-            {trendLabel && <div style={{ color: '#111827' }}>{trendLabel}</div>}
-          </div>
-        );
-      }
-    };
+    return (info: ChartTooltipInfo) => (
+      <ChartTooltip
+        {...info}
+        title={p.title}
+        unitLabel={p.unitLabel}
+        color={p.color}
+        avgOn={p.avgOn}
+        trendOn={p.trendOn}
+        interpOn={p.interpOn}
+        interpMode={p.interpMode}
+        hoverTs={hoverTs}
+        trendMeta={trendMeta}
+        formatTick={formatTick}
+        interpolateAt={interpolateAt}
+      />
+    );
   }, [p.title, p.unitLabel, p.color, trendMeta, p.avgOn, p.trendOn, p.interpOn, p.interpMode, hoverTs]);
 
   return (
@@ -450,25 +427,7 @@ export function MetricPanel(p: MetricPanelProps) {
           <YAxis hide={!p.data.length} stroke="#6b7280" domain={computedYDomain as any} tickFormatter={(v:any)=>formatTick(Number(v))} />
           <Tooltip content={customTooltip as any} trigger="hover" shared={true} />
           {/* the colored background zones: green = safe, yellow = getting close to limits */}
-          {effectiveBounds && (
-            (() => {
-              const y1 = effectiveBounds.low as number; const y2 = effectiveBounds.high as number;
-              const singleBound = !!p.bounds && ((p.bounds.low == null) !== (p.bounds.high == null));
-              if (singleBound || p.critPct == null) {
-                return <ReferenceArea y1={y1} y2={y2} fill="#22c55e" fillOpacity={0.12} />;
-              }
-              // splits the zone into yellow-green-yellow based on the critical percentage
-              const h = y2 - y1; const m = Math.max(0, Math.min(100, p.critPct)) / 100;
-              const lowH = h * (m/2); const midH = h * (1 - m); const topH = h * (m/2);
-              return (
-                <>
-                  <ReferenceArea y1={y1} y2={y1 + lowH} fill="#fbbf24" fillOpacity={0.12} />
-                  <ReferenceArea y1={y1 + lowH} y2={y1 + lowH + midH} fill="#22c55e" fillOpacity={0.12} />
-                  <ReferenceArea y1={y2 - topH} y2={y2} fill="#fbbf24" fillOpacity={0.12} />
-                </>
-              );
-            })()
-          )}
+          <CriticalZones effectiveBounds={effectiveBounds} bounds={p.bounds} critPct={p.critPct} />
           {/* the main data line */}
           <Line type="monotone" dataKey="v" name={p.title} stroke={p.color || "#22c55e"} dot={false} activeDot={{ r: 4, fill: p.color || "#22c55e", stroke: "#ffffff", strokeWidth: 2 }} strokeWidth={2} isAnimationActive={false}>
             {p.deltaY ? <ErrorBar dataKey="errorY" width={2} stroke="#a8a29e" /> : null}
