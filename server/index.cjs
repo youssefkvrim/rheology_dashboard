@@ -319,6 +319,13 @@ function requireAuth(req, res, next) {
   }
 }
 
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin role required' });
+  }
+  next();
+}
+
 // ──────────── auth endpoints (login, reset password, etc) ────────────
 
 // login - checks ur password against the hash and gives u a token if it's right
@@ -395,7 +402,7 @@ app.post('/api/auth/reset-confirm', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ──────────── read endpoints (anyone can hit these) ────────────
+// ──────────── data endpoints ────────────
 
 // quick health check - just pings the DB to see if it's alive
 app.get('/api/health', async (_req, res) => {
@@ -409,7 +416,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // gets all the slurry IDs with their last measurement timestamp
-app.get('/api/slurries', async (_req, res) => {
+app.get('/api/slurries', requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const { recordset: rows } = await pool.request().query(
@@ -435,7 +442,7 @@ app.get('/api/slurries', async (_req, res) => {
 });
 
 // gets the latest + previous value for multiple slurries at once (for the dashboard cards)
-app.get('/api/rheology/latest-all', async (req, res) => {
+app.get('/api/rheology/latest-all', requireAuth, async (req, res) => {
   try {
     const slurriesCsv = String(req.query.slurries || '');
     const paramsCsv = String(req.query.params || 'density,viscosity,pH,temperature,pc,H2O');
@@ -489,7 +496,7 @@ app.get('/api/rheology/latest-all', async (req, res) => {
 });
 
 // gets the full history of measurements for one slurry (for charts basically)
-app.get('/api/rheology/all', async (req, res) => {
+app.get('/api/rheology/all', requireAuth, async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
     const paramsCsv = String(req.query.params || 'density,viscosity,pH,temperature,pc,H2O');
@@ -551,7 +558,7 @@ app.get('/api/rheology/all', async (req, res) => {
 });
 
 // just gets the upper/lower limits for a slurry's params
-app.get('/api/rheology/bounds', async (req, res) => {
+app.get('/api/rheology/bounds', requireAuth, async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
     if (!slurryId) return res.json([]);
@@ -575,7 +582,7 @@ app.get('/api/rheology/bounds', async (req, res) => {
 });
 
 // gets measurement history for one specific slurry + parameter combo
-app.get('/api/rheology', async (req, res) => {
+app.get('/api/rheology', requireAuth, async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
     const parameter = String(req.query.parameter || '');
@@ -611,7 +618,7 @@ app.get('/api/rheology', async (req, res) => {
 });
 
 // figures out which slurries have values outside their safe range (alerts!)
-app.get('/api/alerts/latest', async (req, res) => {
+app.get('/api/alerts/latest', requireAuth, async (req, res) => {
   try {
     const slurriesCsv = String(req.query.slurries || req.query.slurryId || '').trim();
     const slurries = slurriesCsv.split(',').map(s => s.trim()).filter(Boolean);
@@ -692,7 +699,7 @@ async function ensureUserPrefsTable() {
 }
 
 // gets a user's saved preferences (like theme, language, etc)
-app.get('/api/user-prefs', async (req, res) => {
+app.get('/api/user-prefs', requireAuth, async (req, res) => {
   try {
     const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
     if (!userId) return res.status(400).json({ error: 'userId required' });
@@ -737,7 +744,7 @@ app.put('/api/user-prefs', requireAuth, async (req, res) => {
 // ──────────── write endpoints (u gotta be logged in for these) ────────────
 
 // adds or updates a single data point - checks if it already exists first
-app.post('/api/rheology/point', requireAuth, async (req, res) => {
+app.post('/api/rheology/point', requireAuth, requireAdmin, async (req, res) => {
   const parsed = rheologyPointSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten().fieldErrors });
   try {
@@ -794,7 +801,7 @@ app.post('/api/rheology/point', requireAuth, async (req, res) => {
 // ──────────── csv export & import ────────────
 
 // dumps all data for a slurry as a downloadable CSV file
-app.get('/api/rheology/export-csv', async (req, res) => {
+app.get('/api/rheology/export-csv', requireAuth, async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '').trim();
     if (!slurryId) return res.status(400).json({ error: 'slurryId required' });
@@ -839,7 +846,7 @@ app.get('/api/rheology/export-csv', async (req, res) => {
 });
 
 // takes a csv file apart line by line and shoves it into the database
-app.post('/api/rheology/import-csv', requireAuth, async (req, res) => {
+app.post('/api/rheology/import-csv', requireAuth, requireAdmin, async (req, res) => {
   try {
     const override = String(req.query.override || '0') === '1';
     const contentType = String(req.headers['content-type'] || '').toLowerCase();
