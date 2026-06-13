@@ -64,6 +64,12 @@ const fr = {
   'home.critical': 'Critical',
   'home.warning': 'Warning',
 
+  'alerts.title': 'Alertes',
+  'alerts.empty': 'Aucune alerte active',
+  'alerts.critical': 'Critique',
+  'alerts.warning': 'Attention',
+  'alerts.ok': 'OK',
+
   'detail.density': 'Densité',
   'detail.viscosity': 'Viscosité',
   'detail.temperature': 'Température',
@@ -291,6 +297,12 @@ const en: Record<TranslationKey, string> = {
   'home.addSlurry': 'Add a slurry',
   'home.critical': 'Critical',
   'home.warning': 'Warning',
+
+  'alerts.title': 'Alerts',
+  'alerts.empty': 'No active alerts',
+  'alerts.critical': 'Critical',
+  'alerts.warning': 'Warning',
+  'alerts.ok': 'OK',
 
   'detail.density': 'Density',
   'detail.viscosity': 'Viscosity',
@@ -520,6 +532,12 @@ const it: Record<TranslationKey, string> = {
   'home.critical': 'Critico',
   'home.warning': 'Attenzione',
 
+  'alerts.title': 'Avvisi',
+  'alerts.empty': 'Nessun avviso attivo',
+  'alerts.critical': 'Critico',
+  'alerts.warning': 'Attenzione',
+  'alerts.ok': 'OK',
+
   'detail.density': 'Densità',
   'detail.viscosity': 'Viscosità',
   'detail.temperature': 'Temperatura',
@@ -747,6 +765,12 @@ const es: Record<TranslationKey, string> = {
   'home.addSlurry': 'Agregar una barbotina',
   'home.critical': 'Crítico',
   'home.warning': 'Advertencia',
+
+  'alerts.title': 'Alertas',
+  'alerts.empty': 'No hay alertas activas',
+  'alerts.critical': 'Crítico',
+  'alerts.warning': 'Advertencia',
+  'alerts.ok': 'OK',
 
   'detail.density': 'Densidad',
   'detail.viscosity': 'Viscosidad',

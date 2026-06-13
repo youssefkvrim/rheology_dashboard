@@ -7,9 +7,19 @@ import { toRefreshIntervalMs, usePrefsStore } from '../store/prefsStore';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
-import { fetchRheologyLatestAll, fetchLatestBounds, ASSET_BASE } from '../services/api';
-import { FRONTEND_TO_DB } from '../shared/metricKeys';
+import { fetchRheologyLatestAll, fetchLatestBounds, fetchAlertsLatest, ASSET_BASE, AlertStatus } from '../services/api';
+import { FRONTEND_TO_DB, toFeKey } from '../shared/metricKeys';
 import { useTranslation } from '../i18n';
+
+type AlertRow = {
+  slurryId: string;
+  routeId: string;
+  slurryName: string;
+  parameter: string;
+  value: number;
+  unit?: string;
+  status: AlertStatus;
+};
 
 // builds a lil formatter so chart tooltips show the right unit + label
 function mkTooltip(unit: string, metricLabel: string) {
@@ -34,22 +44,60 @@ export default function Home() {
   const [createOpen, setCreateOpen] = useState(false);
   const [latest, setLatest] = useState<Record<string, Record<string, { t:number; v:number; unit?: string; prevV?: number; prevT?: number }>> | null>(null);
   const [dbReachable, setDbReachable] = useState<boolean>(true);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [alertRows, setAlertRows] = useState<AlertRow[]>([]);
   const refreshMs = useMemo(() => toRefreshIntervalMs(refreshInterval), [refreshInterval]);
+  const criticalAlertCount = useMemo(() => alertRows.filter(row => row.status === 'err').length, [alertRows]);
 
   // grabs the latest data for every slurry, then refreshes it while the tab is visible
   useEffect(() => {
     const slurries = barbotines.map(b => (b as any).slurryId).filter(Boolean) as string[];
-    if (!slurries.length) { setLatest({}); return; }
+    if (!slurries.length) { setLatest({}); setAlertRows([]); return; }
+    const slurryMeta = new Map<string, { id: string; name: string }>();
+    barbotines.forEach(b => {
+      const sid = (b as any).slurryId as string | undefined;
+      if (sid) slurryMeta.set(sid, { id: b.id, name: b.name });
+    });
     let cancelled = false;
     let inFlight = false;
     const load = async () => {
       if (cancelled || inFlight || document.hidden) return;
       inFlight = true;
       try {
-        const data = await fetchRheologyLatestAll(slurries);
-        if (!cancelled) { setLatest(data || {}); setDbReachable(true); }
-      } catch {
-        if (!cancelled) { setLatest({}); setDbReachable(false); }
+        const [latestResult, alertsResult] = await Promise.allSettled([
+          fetchRheologyLatestAll(slurries),
+          fetchAlertsLatest(slurries),
+        ]);
+        if (cancelled) return;
+        if (latestResult.status === 'fulfilled') {
+          setLatest(latestResult.value || {});
+          setDbReachable(true);
+        } else {
+          setLatest({});
+          setDbReachable(false);
+        }
+        if (alertsResult.status === 'fulfilled') {
+          const rows: AlertRow[] = [];
+          Object.entries(alertsResult.value || {}).forEach(([sid, metrics]) => {
+            Object.entries(metrics || {}).forEach(([parameter, alert]) => {
+              if (!alert || alert.status === 'ok') return;
+              const meta = slurryMeta.get(sid);
+              rows.push({
+                slurryId: sid,
+                routeId: meta?.id || sid,
+                slurryName: meta?.name || sid,
+                parameter,
+                value: Number(alert.v),
+                unit: alert.unit,
+                status: alert.status,
+              });
+            });
+          });
+          rows.sort((a, b) => (a.status === b.status ? a.slurryName.localeCompare(b.slurryName) : a.status === 'err' ? -1 : 1));
+          setAlertRows(rows);
+        } else {
+          setAlertRows([]);
+        }
       } finally {
         inFlight = false;
       }
@@ -128,10 +176,79 @@ export default function Home() {
     return `${ASSET_BASE}/constant.svg`;
   }, [doseRateHistory]);
 
+  function alertStatusLabel(status: AlertStatus) {
+    if (status === 'err') return t('alerts.critical');
+    if (status === 'warn') return t('alerts.warning');
+    return t('alerts.ok');
+  }
+
+  function alertParameterLabel(parameter: string) {
+    const key = toFeKey(parameter);
+    const labels: Record<string, string> = {
+      densite: t('home.density'),
+      viscosite: t('home.viscosity'),
+      ph: t('home.ph'),
+      temperature: t('home.temperature'),
+      pc: t('home.pc'),
+      h2o: t('home.h2oFlow'),
+      silice: 'Silice',
+      grains: 'Grains',
+    };
+    return labels[key] || parameter;
+  }
+
+  function alertValue(row: AlertRow) {
+    const value = Number.isFinite(row.value) ? Number(row.value.toFixed(3)).toString() : '—';
+    return `${value}${row.unit ? ` ${row.unit}` : ''}`;
+  }
 
   return (
     <div>
-      <h2>{t('home.title')}</h2>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <h2 style={{ margin: 0 }}>{t('home.title')}</h2>
+        <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+          <button
+            className="icon-btn"
+            aria-label={t('alerts.title')}
+            title={t('alerts.title')}
+            onClick={() => setAlertsOpen(open => !open)}
+            style={{ position: 'relative' }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            {criticalAlertCount > 0 && (
+              <span
+                aria-label={`${criticalAlertCount} ${t('alerts.critical')}`}
+                style={{ position: 'absolute', top: -6, right: -6, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 10, lineHeight: '16px', textAlign: 'center', fontWeight: 700 }}
+              >
+                {criticalAlertCount}
+              </span>
+            )}
+          </button>
+          {alertsOpen && (
+            <div className="dropdown" style={{ right: 0, top: 34, width: 360, maxWidth: 'calc(100vw - 32px)', padding: 6 }}>
+              <div style={{ padding: '6px 8px', fontSize: 12, color: 'var(--muted)' }}>{t('alerts.title')}</div>
+              {alertRows.length ? alertRows.map(row => (
+                <button
+                  key={`${row.slurryId}:${row.parameter}`}
+                  className="dropdown-item"
+                  style={{ display: 'block', width: '100%', textAlign: 'left', whiteSpace: 'normal', lineHeight: 1.35 }}
+                  onClick={() => {
+                    setAlertsOpen(false);
+                    navigate(`/barbotine/${encodeURIComponent(row.routeId)}`);
+                  }}
+                >
+                  {row.slurryName} — {alertParameterLabel(row.parameter)} — {alertValue(row)} — {alertStatusLabel(row.status)}
+                </button>
+              )) : (
+                <div className="dropdown-item muted" style={{ cursor: 'default' }}>{t('alerts.empty')}</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
       {/* room temp and humidity cards - shows dashes if no sensor data */}
       <div className="grid" style={{ marginTop: 8 }}>
         <div className="card" style={{ padding: 12, cursor: 'pointer' }} onClick={() => setAmbientOpen(v => !v)}>

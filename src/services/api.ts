@@ -143,6 +143,17 @@ export async function fetchRheologyLatestAll(
   return (await res.json()) || {};
 }
 
+export type AlertStatus = 'ok' | 'warn' | 'err';
+export type LatestAlertMap = Record<string, Record<string, { v: number; unit?: string; status: AlertStatus }>>;
+
+export async function fetchAlertsLatest(slurryIds: string[]): Promise<LatestAlertMap> {
+  if (!slurryIds.length) return {};
+  const q = new URLSearchParams({ slurries: slurryIds.join(',') });
+  const res = await fetch(`${BASE}/alerts/latest?${q.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) { reportError(`GET /alerts/latest ${res.status}`); throw new Error(`HTTP ${res.status}`); }
+  return (await res.json()) || {};
+}
+
 // gets the list of all slurries the server knows about
 export async function fetchSlurries(): Promise<Array<{ id: string; last?: number }>> {
   const res = await fetch(`${BASE}/slurries`, { cache: 'no-store', headers: authHeaders() });
