@@ -7,6 +7,7 @@
 - TC3 CSV skipped-row response — already satisfied in current code — both CSV import success responses and the 409 conflict response include `skipped`.
 - TC4 Jetlab operator checklist — done — added `docs/JETLAB_CHECKLIST.md` with the T0.1 curl/SQL diagnostics, migration steps, computed-column log check, latest-all timing evidence, Express-only deployment switch, and cold-load/card verification; linked it from `README.md`.
 - T3.1 Add Node engine — done — added `"engines": { "node": ">=20" }` to `package.json`. Verified locally on Node `v25.6.0`: `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed. Runtime smoke: escalated `node server/index.cjs` served `/` with HTTP 200; `/api/health` responded 500 because local DNS cannot resolve `y005n8c.rd1.rf1`, matching the existing Jetlab/SQL blocker.
+- T3.2 Patch/minor dependency update — done — `npm update` completed within semver ranges after the sandboxed command hung and was rerun with registry/network approval. `package-lock.json` updated; top-level installed versions include Vite `7.3.5`, TypeScript `5.9.3`, Recharts `2.15.4`, React Router `6.30.4`, Express `4.22.2`, mssql `10.0.4`, and Zustand `5.0.14`. Verification: `node --check server/index.cjs`, `node --check server/lib/lttb.cjs`, `npx tsc --noEmit`, and `npm run build` passed. Runtime smoke: escalated `node server/index.cjs` served `/` with HTTP 200; `/api/health` returned the existing local SQL DNS 500. `npm update` reported 8 vulnerabilities; final audit/fix handling remains T3.10.
 
 ## 2026-06-12
 
