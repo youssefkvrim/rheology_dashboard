@@ -198,18 +198,16 @@ export async function importCsv(csvText: string, override = false): Promise<{ ok
 // --- user preferences (theme, language, whatever they saved) ---
 
 // grabs saved prefs for a user from the server
-export async function getUserPrefs(userId: string): Promise<any | null> {
-  const q = new URLSearchParams({ userId });
-  const res = await fetch(`${BASE}/user-prefs?${q.toString()}`, { cache: 'no-store', headers: authHeaders() });
+export async function getUserPrefs(): Promise<any | null> {
+  const res = await fetch(`${BASE}/user-prefs`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) { reportError(`GET /user-prefs ${res.status}`); return null; }
   const j = await res.json();
   return j?.prefs ?? null;
 }
 
 // saves user prefs to the server so they persist across sessions
-export async function putUserPrefs(userId: string, prefs: any): Promise<boolean> {
-  const q = new URLSearchParams({ userId });
-  const res = await fetch(`${BASE}/user-prefs?${q.toString()}`, {
+export async function putUserPrefs(prefs: any): Promise<boolean> {
+  const res = await fetch(`${BASE}/user-prefs`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ prefs }),

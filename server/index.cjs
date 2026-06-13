@@ -701,8 +701,7 @@ async function ensureUserPrefsTable() {
 // gets a user's saved preferences (like theme, language, etc)
 app.get('/api/user-prefs', requireAuth, async (req, res) => {
   try {
-    const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
-    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const userId = req.user.userId;
     const pool = await getPool();
     const rq = pool.request();
     rq.input('u', sql.NVarChar(128), userId);
@@ -721,8 +720,7 @@ app.get('/api/user-prefs', requireAuth, async (req, res) => {
 // saves user prefs - uses MERGE so it creates or updates in one shot
 app.put('/api/user-prefs', requireAuth, async (req, res) => {
   try {
-    const userId = String(req.query.userId || req.headers['x-user-id'] || '').trim();
-    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const userId = req.user.userId;
     const prefs = req.body?.prefs ?? null;
     const pool = await getPool();
     const rq = pool.request();

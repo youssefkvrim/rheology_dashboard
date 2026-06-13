@@ -58,7 +58,7 @@ export function App() {
     (async () => {
       try {
         if (!isAuthenticated || !user?.username) return;
-        const prefs = await getUserPrefs(user.username);
+        const prefs = await getUserPrefs();
         const remoteTheme = prefs?.theme;
         if (remoteTheme && (remoteTheme === 'light' || remoteTheme === 'dark')) {
           setTheme(remoteTheme);
@@ -71,7 +71,7 @@ export function App() {
     (async () => {
       try {
         if (!isAuthenticated || !user?.username) return;
-        await putUserPrefs(user.username, { theme });
+        await putUserPrefs({ theme });
       } catch { /* ignore */ }
     })();
   }, [theme, isAuthenticated, user?.username]);

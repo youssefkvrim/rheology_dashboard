@@ -74,7 +74,7 @@ export const useBoundsStore = create<BoundsState>((set, get) => {
         try {
           localStorage.setItem(`bounds:${getUserId()}`, JSON.stringify(updated));
         } catch {}
-        void putUserPrefs(getUserId(), { bounds: updated }).catch(() => {});
+        void putUserPrefs({ bounds: updated }).catch(() => {});
         return { bounds: updated };
       });
     },
@@ -96,7 +96,7 @@ export const useBoundsStore = create<BoundsState>((set, get) => {
         // but we chill a bit before hitting the server lol
         if (boundsDebounceTimer) clearTimeout(boundsDebounceTimer);
         boundsDebounceTimer = setTimeout(() => {
-          void putUserPrefs(getUserId(), { boundsById: updated }).catch(() => {});
+          void putUserPrefs({ boundsById: updated }).catch(() => {});
         }, 2000);
         return { boundsById: updated };
       });
@@ -117,7 +117,7 @@ export const useBoundsStore = create<BoundsState>((set, get) => {
         const userId = getUserId();
         // no point fetching if nobody's logged in tbh
         if (!userId || userId === 'anonymous') return;
-        const prefs = await getUserPrefs(userId);
+        const prefs = await getUserPrefs();
         if (prefs?.bounds) {
           set(s => ({ bounds: { ...s.bounds, ...stripLegacyBounds(prefs.bounds) } }));
         }
