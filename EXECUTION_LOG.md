@@ -6,6 +6,7 @@
 - TC2 ship accepted Phase 0–2 work — done — fast-forwarded `phase-2/corrections` into `phase-2/performance`, fast-forwarded `main` through `phase-0/restore` (`8107809`), `phase-1/hygiene` (`54b60e0`), and corrected Phase 2 (`758dd1e`), tagged `v0.5.0-restored`, `v0.5.1`, and `v0.6.0`, and pushed `main`, all phase branches, the correction branch, and tags to `origin`. Verified `git branch --merged main` lists the phase branches, `git tag` shows the required tags, and `main`, `origin/main`, and `HEAD` matched at `758dd1e` after the push.
 - TC3 CSV skipped-row response — already satisfied in current code — both CSV import success responses and the 409 conflict response include `skipped`.
 - TC4 Jetlab operator checklist — done — added `docs/JETLAB_CHECKLIST.md` with the T0.1 curl/SQL diagnostics, migration steps, computed-column log check, latest-all timing evidence, Express-only deployment switch, and cold-load/card verification; linked it from `README.md`.
+- T3.1 Add Node engine — done — added `"engines": { "node": ">=20" }` to `package.json`. Verified locally on Node `v25.6.0`: `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed. Runtime smoke: escalated `node server/index.cjs` served `/` with HTTP 200; `/api/health` responded 500 because local DNS cannot resolve `y005n8c.rd1.rf1`, matching the existing Jetlab/SQL blocker.
 
 ## 2026-06-12
 
