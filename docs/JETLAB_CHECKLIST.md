@@ -39,6 +39,14 @@ Run this checklist on the Jetlab host or from a network segment that can reach t
 
   Evidence:
 
-- [ ] 6. Confirm cold load is under 2 seconds and Home shows cards with last-measure dates.
+- [ ] 6. Confirm the deployed package version responds:
+
+  ```bash
+  curl -s http://localhost:3001/api/version
+  ```
+
+  Evidence:
+
+- [ ] 7. Confirm cold load is under 2 seconds and Home shows cards with last-measure dates.
 
   Evidence:

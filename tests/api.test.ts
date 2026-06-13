@@ -9,6 +9,7 @@ process.env.SMTP_FROM = '';
 const require = createRequire(import.meta.url);
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+const pkg = require('../package.json');
 const { app, __test } = require('../server/index.cjs');
 
 const JWT_OPTIONS = {
@@ -85,6 +86,12 @@ describe('API authentication and validation', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('exposes the package version without authentication', async () => {
+    const res = await request(app).get('/api/version');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ version: pkg.version });
   });
 
   it('rejects unauthenticated protected endpoints before touching the database', async () => {

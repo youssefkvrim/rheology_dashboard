@@ -42,6 +42,14 @@ dotenv.config({ path: path.resolve(process.cwd(), 'vault/secrets.env') });
 
 const DIST_DIR = path.join(process.cwd(), 'dist');
 const SERVES_DIST = fs.existsSync(DIST_DIR);
+const APP_VERSION = (() => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    return String(pkg.version || 'unknown');
+  } catch {
+    return 'unknown';
+  }
+})();
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
@@ -544,6 +552,10 @@ app.get('/api/health', async (_req, res) => {
   } catch (e) {
     fail(res, e);
   }
+});
+
+app.get('/api/version', (_req, res) => {
+  res.json({ version: APP_VERSION });
 });
 
 app.post('/api/support', requireAuth, async (req, res) => {
