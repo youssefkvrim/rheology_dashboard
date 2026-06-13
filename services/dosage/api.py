@@ -10,6 +10,7 @@ No CORS middleware is enabled. Until dashboard proxy integration, bind only to
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import logging
 
@@ -49,23 +50,21 @@ from models import (
 
 log = logging.getLogger("barbotine.api")
 
-app = FastAPI(
-    title="Barbotine Control API",
-    version="2.0.0",
-    description="Water-addition control for ceramic barbotine — decision engine + doser management",
-)
-
-
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     init_db()
     for bt, profile in PROFILES.items():
         if get_current_flow_rate(bt) is None:
             set_flow_state(bt, profile.base_flow_rate)
+    yield
+
+
+app = FastAPI(
+    title="Barbotine Control API",
+    version="2.0.0",
+    description="Water-addition control for ceramic barbotine — decision engine + doser management",
+    lifespan=lifespan,
+)
 
 
 # ---------------------------------------------------------------------------

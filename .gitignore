@@ -10,3 +10,9 @@ server/*.log
 ._*
 .idea/
 .vscode/
+services/dosage/*.db
+services/dosage/*.db-wal
+services/dosage/*.db-shm
+__pycache__/
+*.pyc
+.venv/

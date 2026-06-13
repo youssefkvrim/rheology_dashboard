@@ -11,6 +11,7 @@ Tables:
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -31,7 +32,14 @@ from models import (
     StatusTriplet,
 )
 
-DB_PATH = Path(__file__).parent / "barbotine.db"
+def _configured_db_path() -> Path:
+    configured = os.environ.get("DOSAGE_DB_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    return Path(__file__).resolve().parent / "barbotine.db"
+
+
+DB_PATH = _configured_db_path()
 
 
 def _parse_ts(raw: str) -> datetime:
@@ -43,6 +51,7 @@ def _parse_ts(raw: str) -> datetime:
 
 @contextmanager
 def _connect(path: Path = DB_PATH) -> Generator[sqlite3.Connection, None, None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
