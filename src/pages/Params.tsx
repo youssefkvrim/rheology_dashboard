@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useI18n, Language, LANGUAGE_NAMES } from '../i18n';
+import { usePrefsStore } from '../store/prefsStore';
 
 type NotifChannel = 'email' | 'sms' | 'none';
 
@@ -15,6 +16,12 @@ const ACCENT_COLORS = [
 // the settings page where u can change theme, language, alerts etc
 export default function Params() {
   const { language, setLanguage, t, availableLanguages } = useI18n();
+  const refreshInterval = usePrefsStore(s => s.refreshInterval);
+  const setRefreshInterval = usePrefsStore(s => s.setRefreshInterval);
+  const rawRefreshInterval = Number(refreshInterval);
+  const refreshIntervalSeconds = Number.isFinite(rawRefreshInterval)
+    ? Math.max(30, Math.round(rawRefreshInterval > 1000 ? rawRefreshInterval / 1000 : rawRefreshInterval))
+    : 30;
 
   const NOTIF_TYPES = [
     { key: 'density', label: t('alert.density') },
@@ -41,11 +48,6 @@ export default function Params() {
   // the accent color for the whole app
   const [accentColor, setAccentColor] = useState<string>(() => {
     return localStorage.getItem('accent-color') || '#0e224b';
-  });
-
-  // how often the data refreshes (in seconds)
-  const [refreshInterval, setRefreshInterval] = useState<number>(() => {
-    return Number(localStorage.getItem('refresh-interval')) || 30;
   });
 
   // default chart display options (avg line, trend line, etc)
@@ -82,8 +84,8 @@ export default function Params() {
   }, [accentColor]);
 
   useEffect(() => {
-    localStorage.setItem('refresh-interval', String(refreshInterval));
-  }, [refreshInterval]);
+    if (refreshIntervalSeconds !== refreshInterval) setRefreshInterval(refreshIntervalSeconds);
+  }, [refreshInterval, refreshIntervalSeconds, setRefreshInterval]);
 
   useEffect(() => {
     localStorage.setItem('default-avg-on', String(defaultAvgOn));
@@ -197,10 +199,10 @@ export default function Params() {
         <div className="row" style={{ gap: 8, marginTop: 8 }}>
           <input
             type="number"
-            min={5}
+            min={30}
             max={300}
-            value={refreshInterval}
-            onChange={(e) => setRefreshInterval(Math.max(5, Math.min(300, Number(e.target.value))))}
+            value={refreshIntervalSeconds}
+            onChange={(e) => setRefreshInterval(Math.max(30, Math.min(300, Number(e.target.value))))}
             style={{ width: 80 }}
           />
           <span className="muted">{t('params.seconds')}</span>

@@ -14,7 +14,6 @@ import '../styles/app.css';
 import { useAuth } from '../features/auth/AuthContext';
 import { getUserPrefs, putUserPrefs, apiHealth, ASSET_BASE } from '../services/api';
 import { useBarbotineStore } from '../store/barbotineStore';
-import { usePrefsStore } from '../store/prefsStore';
 import { DebuggerFab } from '../components/DebuggerFab';
 import { useTranslation } from '../i18n';
 
@@ -47,7 +46,6 @@ export function App() {
 
   const { ready, isAuthenticated, user, login, logout } = useAuth();
   const initialDataLoading = useBarbotineStore(s => s.initialDataLoading);
-  const refreshInterval = usePrefsStore(s => s.refreshInterval);
   const [loadingDone, setLoadingDone] = useState(false);
   // if u log out, reset the loading screen so it shows again next login
   useEffect(() => {

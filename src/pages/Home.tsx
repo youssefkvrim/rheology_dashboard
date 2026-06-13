@@ -3,6 +3,7 @@ import { useBarbotineStore } from '../store/barbotineStore';
 import { useBoundsStore } from '../store/boundsStore';
 import { useAmbientStore } from '../store/ambientStore';
 import { useDoseStore } from '../store/doseStore';
+import { toRefreshIntervalMs, usePrefsStore } from '../store/prefsStore';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { BarbotineCreateDialog } from '../components/BarbotineCreateDialog';
@@ -27,27 +28,42 @@ export default function Home() {
   const { bounds, getBoundsFor, setBoundsFor } = useBoundsStore();
   const { ambient, ambientHistory } = useAmbientStore();
   const { doseRateLph, doseRateHistory } = useDoseStore();
+  const refreshInterval = usePrefsStore(s => s.refreshInterval);
   const navigate = useNavigate();
   const [ambientOpen, setAmbientOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [latest, setLatest] = useState<Record<string, Record<string, { t:number; v:number; unit?: string; prevV?: number; prevT?: number }>> | null>(null);
   const [dbReachable, setDbReachable] = useState<boolean>(true);
+  const refreshMs = useMemo(() => toRefreshIntervalMs(refreshInterval), [refreshInterval]);
 
-  // grabs the latest data for every slurry from the server when the page loads
+  // grabs the latest data for every slurry, then refreshes it while the tab is visible
   useEffect(() => {
     const slurries = barbotines.map(b => (b as any).slurryId).filter(Boolean) as string[];
-    if (!slurries.length) return;
+    if (!slurries.length) { setLatest({}); return; }
     let cancelled = false;
-    (async () => {
+    let inFlight = false;
+    const load = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
       try {
         const data = await fetchRheologyLatestAll(slurries);
         if (!cancelled) { setLatest(data || {}); setDbReachable(true); }
       } catch {
         if (!cancelled) { setLatest({}); setDbReachable(false); }
+      } finally {
+        inFlight = false;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [barbotines.length]);
+    };
+    void load();
+    const interval = window.setInterval(() => { void load(); }, refreshMs);
+    const onVisibilityChange = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [barbotines, refreshMs]);
 
   // loads the min/max limits for each slurry so we know whats ok and whats not
   const boundsFetchedRef = useRef<Set<string>>(new Set());
@@ -306,4 +322,3 @@ export default function Home() {
     </div>
   );
 }
-

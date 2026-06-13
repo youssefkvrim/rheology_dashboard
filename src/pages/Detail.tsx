@@ -5,6 +5,7 @@ import { useBoundsStore } from '../store/boundsStore';
 import { useDoseStore } from '../store/doseStore';
 import { Line, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useChartParams } from '../store/chartParams';
+import { toRefreshIntervalMs, usePrefsStore } from '../store/prefsStore';
 import { ChartPanel } from '../components/ChartPanel';
 import { densConverters, viscConverters, tempConverters, h2oConverters, pcConverters } from '../utils/units';
 import { fetchRheologyAll, ASSET_BASE } from '../services/api';
@@ -112,6 +113,7 @@ export default function Detail() {
   const { bounds, getBoundsFor, setBoundsFor } = useBoundsStore();
   const { doseRateLph, setDoseRateLph, addCoverPowerResult, lastPlaqueSrc, setLastPlaqueSrc } = useDoseStore();
   const { getParamsFor, setParamsFor, params: globalParams } = useChartParams();
+  const refreshInterval = usePrefsStore(s => s.refreshInterval);
 
   // which time range each chart is zoomed to (saved in localstorage so it persists)
   const [densRange, setDensRange] = useState<RangeKey>(() => (localStorage.getItem(`range:${id}:densite`) as RangeKey) || 'all');
@@ -158,6 +160,7 @@ export default function Detail() {
   const current = useMemo(() => barbotines.find(b => b.id === id) || null, [barbotines, id]);
   const sid = (current && (current as any).slurryId) as string | undefined;
   const isOnline = !!current?.online;
+  const refreshMs = useMemo(() => toRefreshIntervalMs(refreshInterval), [refreshInterval]);
   const scopedBounds = useMemo(() => getBoundsFor(id || ''), [getBoundsFor, id]);
   const scopedParams = useMemo(() => getParamsFor(id || ''), [getParamsFor, id]);
   const setScoped = (metric: any, patch: any) => setParamsFor(id || '', metric, patch);
@@ -166,7 +169,10 @@ export default function Detail() {
   useEffect(() => {
     if (!sid) return;
     let cancelled = false;
-    (async () => {
+    let inFlight = false;
+    const load = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
       try {
         const allDbKeys = Object.values(FRONTEND_TO_DB);
         const ranges = [densRange, viscRange, tempRange, phRange, pcRange, h2oRange, siliceRange, grainsRange];
@@ -203,9 +209,20 @@ export default function Detail() {
           });
         }
       } catch { /* db probably down, oh well */ }
-    })();
-    return () => { cancelled = true; };
-  }, [sid, id, densRange, viscRange, tempRange, phRange, pcRange, h2oRange, siliceRange, grainsRange, specificStart, specificEnd]);
+      finally {
+        inFlight = false;
+      }
+    };
+    void load();
+    const interval = window.setInterval(() => { void load(); }, refreshMs);
+    const onVisibilityChange = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [sid, id, densRange, viscRange, tempRange, phRange, pcRange, h2oRange, siliceRange, grainsRange, specificStart, specificEnd, refreshMs, setBoundsFor]);
 
   // parses the custom date inputs into timestamps
   const specStart = useMemo(() => { const s = Date.parse(specificStart); return Number.isFinite(s) ? s : Date.now() - 3600e3; }, [specificStart]);
