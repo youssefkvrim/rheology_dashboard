@@ -34,7 +34,7 @@ const poolConfig = {
   port: Number(process.env.MSSQL_PORT || 1433),
   options: {
     encrypt: String(process.env.MSSQL_ENCRYPT || 'true') === 'true',
-    trustServerCertificate: String(process.env.MSSQL_TRUST_CERT || 'true') === 'true',
+    trustServerCertificate: String(process.env.MSSQL_TRUST_CERT || 'false') === 'true',
     instanceName: process.env.MSSQL_INSTANCE,
   },
   pool: { max: 2, min: 0, idleTimeoutMillis: 30000 },

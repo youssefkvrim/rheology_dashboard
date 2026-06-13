@@ -65,9 +65,15 @@ MSSQL_USER=YOUR_USER
 MSSQL_PASSWORD=YOUR_PASS
 MSSQL_PORT=1433
 MSSQL_ENCRYPT=true
-MSSQL_TRUST_CERT=true
+MSSQL_TRUST_CERT=false
 JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET
+ALLOWED_ORIGINS=
 ```
+
+Set `ALLOWED_ORIGINS` only when the browser frontend is served from a different
+origin than the Express backend. Leave it blank for same-origin `dist/` serving.
+If the SQL Server uses a self-signed certificate, set `MSSQL_TRUST_CERT=true`
+explicitly in `vault/secrets.env`.
 
 Frontend (`.env.local` optional):
 ```

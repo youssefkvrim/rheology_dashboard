@@ -4,6 +4,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 const sql = require('mssql');
 const dotenv = require('dotenv');
@@ -37,16 +39,41 @@ const { z } = require('zod');
 // grabs secret keys from a hidden vault file that git doesn't know about
 dotenv.config({ path: path.resolve(process.cwd(), 'vault/secrets.env') });
 
+const DIST_DIR = path.join(process.cwd(), 'dist');
+const SERVES_DIST = fs.existsSync(DIST_DIR);
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 const app = express();
-// lets any frontend talk to us and caps how much data u can send
-app.use(cors());
+app.use(helmet({ contentSecurityPolicy: false }));
+if (ALLOWED_ORIGINS.length) {
+  app.use(cors({
+    origin(origin, cb) {
+      cb(null, !origin || ALLOWED_ORIGINS.includes(origin));
+    },
+  }));
+} else if (!SERVES_DIST) {
+  console.warn('[server] CORS disabled; set ALLOWED_ORIGINS for cross-origin browser clients');
+}
+const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/reset-request', authLimiter);
+app.use('/api/', apiLimiter);
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.text({ type: ['text/*', 'application/csv', 'text/csv'], limit: '10mb' }));
 
 const PORT = Number(process.env.BACKEND_PORT || 3001);
-const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET === 'CHANGE_ME_IN_PRODUCTION') {
+  console.error('[server] JWT_SECRET must be set to a production random value');
+  process.exit(1);
+}
 const JWT_EXPIRY = '8h';
+const JWT_ISSUER = 'safran-dashboard';
+const JWT_AUDIENCE = 'safran-dashboard';
 const LEGACY_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}(?::?\d{2})?$/;
 let HAS_COMPUTED_COLS = false;
 
@@ -133,6 +160,11 @@ function parseEpoch(raw) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function fail(res, e) {
+  console.error('[api] internal error:', e);
+  return res.status(500).json({ error: 'internal error' });
+}
+
 function downsampleSeries(points, maxPoints) {
   return points.length > maxPoints ? lttb(points, maxPoints) : points;
 }
@@ -176,7 +208,7 @@ const poolConfig = {
   port: Number(process.env.MSSQL_PORT || 1433),
   options: {
     encrypt: String(process.env.MSSQL_ENCRYPT || 'true') === 'true',
-    trustServerCertificate: String(process.env.MSSQL_TRUST_CERT || 'true') === 'true',
+    trustServerCertificate: String(process.env.MSSQL_TRUST_CERT || 'false') === 'true',
     instanceName: process.env.MSSQL_INSTANCE,
   },
   pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
@@ -220,6 +252,23 @@ function getPool() {
     poolPromise = delay > 0 ? new Promise(resolve => setTimeout(resolve, delay)).then(attempt) : attempt();
   }
   return poolPromise;
+}
+
+async function auditLog(userId, action, detail = {}) {
+  try {
+    const pool = await getPool();
+    await pool.request()
+      .input('user_id', sql.NVarChar(64), userId || null)
+      .input('action', sql.NVarChar(32), action)
+      .input('detail', sql.NVarChar(sql.MAX), JSON.stringify(detail ?? {}))
+      .query(`
+        IF OBJECT_ID(N'audit_log', N'U') IS NOT NULL
+          INSERT INTO audit_log (user_id, action, detail)
+          VALUES (@user_id, @action, @detail)
+      `);
+  } catch (e) {
+    console.warn('[audit] write skipped: %s', e?.message || 'error');
+  }
 }
 
 async function probeComputedColumns() {
@@ -311,7 +360,7 @@ function requireAuth(req, res, next) {
   }
   const token = authHeader.slice(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET, { issuer: JWT_ISSUER, audience: JWT_AUDIENCE });
     req.user = { userId: payload.sub, email: payload.email, role: payload.role };
     next();
   } catch (err) {
@@ -348,10 +397,16 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   if (user.mustReset) {
+    await auditLog(user.userId, 'login', { role: user.role, mustReset: true });
     return res.json({ ok: true, mustReset: true, user: { userId: user.userId, email: user.email, role: user.role } });
   }
   // password checks out - make a token that expires in 8 hours
-  const token = jwt.sign({ sub: user.userId, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  const token = jwt.sign(
+    { sub: user.userId, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRY, issuer: JWT_ISSUER, audience: JWT_AUDIENCE },
+  );
+  await auditLog(user.userId, 'login', { role: user.role, mustReset: false });
   res.json({ ok: true, token, user: { userId: user.userId, email: user.email, role: user.role } });
 });
 
@@ -399,6 +454,7 @@ app.post('/api/auth/reset-confirm', async (req, res) => {
     return res.status(503).json({ error: 'auth unavailable' });
   }
   resetTokens.delete(token);
+  await auditLog(entry.userId, 'reset', { method: 'reset-confirm' });
   res.json({ ok: true });
 });
 
@@ -411,7 +467,7 @@ app.get('/api/health', async (_req, res) => {
     await getPool();
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -437,7 +493,7 @@ app.get('/api/slurries', requireAuth, async (_req, res) => {
     warnSkippedTimestamps(skipped);
     res.json(out);
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -491,7 +547,7 @@ app.get('/api/rheology/latest-all', requireAuth, async (req, res) => {
     warnSkippedTimestamps(skipped);
     res.json(out);
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -553,7 +609,7 @@ app.get('/api/rheology/all', requireAuth, async (req, res) => {
     }
     res.json({ series: map });
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -577,7 +633,7 @@ app.get('/api/rheology/bounds', requireAuth, async (req, res) => {
     const out = rows.map(r => ({ key: toFrontendKey(r.parameter), low: r.lsl ?? null, high: r.usl ?? null }));
     res.json(out);
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -613,7 +669,7 @@ app.get('/api/rheology', requireAuth, async (req, res) => {
     warnSkippedTimestamps(skipped);
     res.json(downsampleSeries(out, maxPoints));
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -679,7 +735,7 @@ app.get('/api/alerts/latest', requireAuth, async (req, res) => {
     }
     res.json(out);
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -713,7 +769,7 @@ app.get('/api/user-prefs', requireAuth, async (req, res) => {
       return res.json({ ok: true, prefs: null });
     }
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -733,9 +789,10 @@ app.put('/api/user-prefs', requireAuth, async (req, res) => {
       ON (t.user_id = s.user_id)
       WHEN MATCHED THEN UPDATE SET t.data = s.data, t.updated_at = SYSDATETIMEOFFSET()
       WHEN NOT MATCHED THEN INSERT (user_id, data) VALUES (s.user_id, s.data);`);
+    await auditLog(userId, 'prefs.write', { keys: prefs && typeof prefs === 'object' ? Object.keys(prefs) : [] });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -783,16 +840,18 @@ app.post('/api/rheology/point', requireAuth, requireAdmin, async (req, res) => {
         SET [id_slurry]=@slurry, [slurry_type]=@stype, [timestamp]=@ts, [source]=@src,
             [parameter]=@param, [value]=@val, [unit]=@unit, [usl]=@usl, [lsl]=@lsl
         WHERE [id_rheology]=@id`);
+      await auditLog(req.user.userId, 'point.write', { mode: 'update', id_rheology, id_slurry, parameter });
       return res.json({ ok: true, updated: id_rheology });
     } else {
       // new point, insert it
       await rq.query(`
         INSERT INTO [rheology] ([id_rheology],[id_slurry],[slurry_type],[timestamp],[source],[parameter],[value],[unit],[usl],[lsl])
         VALUES (@id,@slurry,@stype,@ts,@src,@param,@val,@unit,@usl,@lsl)`);
+      await auditLog(req.user.userId, 'point.write', { mode: 'insert', id_rheology, id_slurry, parameter });
       return res.json({ ok: true, inserted: id_rheology });
     }
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -839,7 +898,7 @@ app.get('/api/rheology/export-csv', requireAuth, async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${slurryId}_export.csv"`);
     res.send(csv);
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
@@ -952,6 +1011,12 @@ app.post('/api/rheology/import-csv', requireAuth, requireAdmin, async (req, res)
           else updated.push(r.id_rheology);
         }
         await tx.commit();
+        await auditLog(req.user.userId, 'csv.import', {
+          override: true,
+          insertedCount: inserted.length,
+          updatedCount: updated.length,
+          skipped,
+        });
         return res.json({ ok: true, inserted, updated, skipped });
       } else {
         // safe mode - only inserts new rows, tells u about duplicates
@@ -970,6 +1035,12 @@ app.post('/api/rheology/import-csv', requireAuth, requireAdmin, async (req, res)
 
         const insertedCount = rowsAffected[0] || 0;
         await tx.commit();
+        await auditLog(req.user.userId, 'csv.import', {
+          override: false,
+          insertedCount,
+          conflictCount: conflicts.length,
+          skipped,
+        });
 
         if (conflicts.length) return res.status(409).json({ ok: false, conflicts, insertedCount, skipped });
         return res.json({ ok: true, insertedCount, skipped });
@@ -979,19 +1050,18 @@ app.post('/api/rheology/import-csv', requireAuth, requireAdmin, async (req, res)
       throw inner;
     }
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'error' });
+    fail(res, e);
   }
 });
 
 // ──────────── serves the frontend app ────────────
 
-const distDir = path.join(process.cwd(), 'dist');
-if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir, { maxAge: '30d', immutable: true, index: false }));
+if (SERVES_DIST) {
+  app.use(express.static(DIST_DIR, { maxAge: '30d', immutable: true, index: false }));
   // any route that's not /api/* gets the frontend - classic SPA trick
   app.get(/^(?!\/api\/).*/, (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(path.join(distDir, 'index.html'));
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 }
 
