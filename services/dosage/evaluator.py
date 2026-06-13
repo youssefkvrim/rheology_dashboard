@@ -7,11 +7,12 @@ pre-adjustment and post-adjustment rheological averages.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from config import EVALUATION_WINDOW_HOURS, MIN_MEASUREMENTS_FOR_EVAL, PROFILES
 from data_store import (
     compute_rolling_average,
+    get_confirmed_adjustments_between,
     get_last_confirmed_adjustment,
     get_measurements_window,
     insert_outcome,
@@ -56,6 +57,26 @@ def evaluate_last_adjustment(btype: BarbotineType) -> ActionOutcome | None:
 
     if pre_avg is None or post_avg is None:
         return None
+
+    confounders = [
+        other for other in get_confirmed_adjustments_between(
+            btype,
+            adj.timestamp,
+            adj.timestamp + timedelta(hours=EVALUATION_WINDOW_HOURS),
+        )
+        if other.id != adj.id
+    ]
+    if confounders:
+        outcome = ActionOutcome(
+            adjustment_id=adj.id,
+            barbotine_type=btype,
+            pre_avg=pre_avg,
+            post_avg=post_avg,
+            verdict=OutcomeVerdict.PENDING,
+            detail=f"confounded by adjustment #{confounders[0].id}",
+        )
+        insert_outcome(outcome)
+        return outcome
 
     verdict, detail = _judge(adj, pre_avg, post_avg)
 

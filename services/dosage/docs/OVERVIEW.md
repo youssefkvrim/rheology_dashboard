@@ -72,19 +72,25 @@ disposes.
 2. Compute a rolling average of the recent readings.
 3. Classify density, viscosity, and covering power with hysteresis.
 4. Compute continuous confidence scores.
-5. Resolve the 27-scenario decision table.
-6. Compute a severity-weighted raw delta.
-7. Apply the 24-hour daily cap from confirmed operator deltas only:
+5. Resolve the 27-scenario decision table and flag conflict triplets where
+   water alone cannot correct all deviating properties.
+6. Attach a DECREASE note when relevant: reducing water flow slows future
+   dilution but cannot increase density.
+7. Compute a severity-weighted raw delta.
+8. Apply the 24-hour daily cap from confirmed operator deltas only:
    `abs(actual_rate - current_rate)` for `user_confirmed=1` rows.
-8. Snap the proposal to nearby valid doser rates.
-9. Insert a pending adjustment.
-10. Wait for explicit operator confirmation or rejection.
+9. Snap the proposal to nearby valid doser rates. A positive proposal below
+   the hardware minimum exposes both the minimum rate and OFF.
+10. Insert a pending adjustment.
+11. Wait for explicit operator confirmation or rejection.
 
 ## Safety Limits
 
 - Per adjustment: `+/-0.002 L/h`
 - Per 24 hours: `+/-0.048 L/day`, confirmed physical deltas only
 - Pending confirmation TTL: `4 h`
+- Post-confirm decision window: `max(6 h, min(72 h, hours since last confirm))`,
+  falling back to 72 h when under-sampled
 - Hysteresis band: `5%`
 - Flow floor: `0 L/h`
 
@@ -140,9 +146,14 @@ action_outcomes(
 - `history`
 - `analytics`
 - `import-csv`
+- `backtest.py --csv <export.csv> --type <M7|2CN2|R55> --slurry <id>`
 
 ## Tests
 
 The current unittest suite covers decision classification, flow-controller caps
 and snapping, API/CLI decide side-effect isolation, pending supersession,
 confirm, reject, stale-confirm `409`, and the confirmed-only daily cap.
+
+Phase D2 adds conflict-triplet tests, evaluator verdict/confounder coverage,
+FastAPI TestClient coverage on a temporary SQLite database, and archived-data
+backtest reports in `docs/backtests/`.

@@ -40,3 +40,14 @@ cd services/dosage
 python3 -m unittest discover
 python3 -m unittest discover -s tests
 ```
+
+## Backtest
+
+```bash
+cd services/dosage
+python3 backtest.py --csv <export.csv> --type M7 --slurry M7-3006 --output-dir docs/backtests
+```
+
+Backtest reports are Markdown evidence for process review. They compare the
+engine's proposed direction with the H2O flow direction recorded in archived
+dashboard exports.

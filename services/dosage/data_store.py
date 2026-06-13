@@ -169,7 +169,7 @@ def insert_measurement(m: Measurement, path: Path = DB_PATH) -> int:
 
 def get_measurements_window(
     btype: BarbotineType,
-    hours: int = 72,
+    hours: float = 72,
     path: Path = DB_PATH,
     since: datetime | None = None,
 ) -> list[Measurement]:
@@ -319,6 +319,25 @@ def get_confirmed_adjustments_window(
                  AND timestamp >= ?
                ORDER BY timestamp""",
             (btype.value, cutoff),
+        ).fetchall()
+    return _rows_to_adjustments(rows)
+
+
+def get_confirmed_adjustments_between(
+    btype: BarbotineType,
+    start: datetime,
+    end: datetime,
+    path: Path = DB_PATH,
+) -> list[AdjustmentRecord]:
+    with _connect(path) as conn:
+        rows = conn.execute(
+            """SELECT * FROM adjustments
+               WHERE barbotine_type = ?
+                 AND user_confirmed = 1
+                 AND timestamp > ?
+                 AND timestamp <= ?
+               ORDER BY timestamp""",
+            (btype.value, start.isoformat(), end.isoformat()),
         ).fetchall()
     return _rows_to_adjustments(rows)
 

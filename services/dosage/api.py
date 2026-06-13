@@ -19,13 +19,23 @@ from pydantic import BaseModel, Field
 
 from analytics import compute_stats
 from clock import now_utc
-from config import DOSER_CONFIGS, PENDING_TTL_HOURS, PROFILES, ROLLING_WINDOW_HOURS
+from config import (
+    CONFLICT_NOTE,
+    DECREASE_NOTE,
+    DOSER_CONFIGS,
+    MIN_MEASUREMENTS_FOR_EVAL,
+    PENDING_TTL_HOURS,
+    POST_ADJUST_MIN_WINDOW_HOURS,
+    PROFILES,
+    ROLLING_WINDOW_HOURS,
+)
 from data_store import (
     compute_rolling_average,
     confirm_adjustment,
     get_all_adjustments,
     get_confirmed_adjustments_window,
     get_current_flow_rate,
+    get_last_confirmed_adjustment,
     get_last_status,
     get_measurements_window,
     get_pending_adjustment,
@@ -97,6 +107,11 @@ class DecisionResponse(BaseModel):
     proposed_delta: float
     doser_options: list[float]
     doser_increment: float
+    conflict: bool
+    conflict_note: str | None
+    note: str | None
+    window_hours: float
+    window_degraded: bool
     readings_count: int
     avg_density: float
     avg_viscosity: float
@@ -174,6 +189,30 @@ def _pending_is_stale(pending: AdjustmentRecord) -> bool:
     return pending.timestamp < now_utc() - timedelta(hours=PENDING_TTL_HOURS)
 
 
+def _decision_measurements(bt: BarbotineType) -> tuple[list[Measurement], float, bool]:
+    last_confirmed = get_last_confirmed_adjustment(bt)
+    window_hours = float(ROLLING_WINDOW_HOURS)
+    degraded = False
+
+    if last_confirmed is not None:
+        elapsed_hours = max(
+            0.0,
+            (now_utc() - last_confirmed.timestamp).total_seconds() / 3600,
+        )
+        window_hours = max(
+            float(POST_ADJUST_MIN_WINDOW_HOURS),
+            min(float(ROLLING_WINDOW_HOURS), elapsed_hours),
+        )
+
+    measurements = get_measurements_window(bt, window_hours)
+    if last_confirmed is not None and len(measurements) < MIN_MEASUREMENTS_FOR_EVAL:
+        degraded = True
+        window_hours = float(ROLLING_WINDOW_HOURS)
+        measurements = get_measurements_window(bt, ROLLING_WINDOW_HOURS)
+
+    return measurements, window_hours, degraded
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -207,9 +246,9 @@ def make_decision(btype: str) -> DecisionResponse:
             "detail": eval_result.detail,
         }
 
-    measurements = get_measurements_window(bt, ROLLING_WINDOW_HOURS)
+    measurements, window_hours, window_degraded = _decision_measurements(bt)
     if not measurements:
-        raise HTTPException(404, f"No measurements in the last {ROLLING_WINDOW_HOURS}h for {bt.value}")
+        raise HTTPException(404, f"No measurements in the last {int(window_hours)}h for {bt.value}")
 
     avg = compute_rolling_average(measurements)
     if avg is None:
@@ -218,7 +257,7 @@ def make_decision(btype: str) -> DecisionResponse:
     previous_status = get_last_status(bt)
     status = classify_reading(avg, profile, previous_status)
     confidence = compute_confidence(avg, profile)
-    scenario_id, decision = resolve_scenario(status)
+    scenario_id, decision, conflict = resolve_scenario(status)
 
     current_rate = get_current_flow_rate(bt)
     if current_rate is None:
@@ -261,6 +300,11 @@ def make_decision(btype: str) -> DecisionResponse:
         proposed_delta=delta,
         doser_options=doser_options,
         doser_increment=doser.increment,
+        conflict=conflict,
+        conflict_note=CONFLICT_NOTE if conflict else None,
+        note=DECREASE_NOTE if decision == Decision.DECREASE else None,
+        window_hours=window_hours,
+        window_degraded=window_degraded,
         readings_count=len(measurements),
         avg_density=avg.density,
         avg_viscosity=avg.viscosity,

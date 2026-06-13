@@ -85,8 +85,13 @@ def snap_to_doser(proposed: float, doser: DoserConfig) -> list[float]:
     """
     Return valid doser rates nearest to the proposed value, sorted by proximity.
     Accounts for min_rate and hardware increment.
+    Positive proposals below min_rate return min_rate and OFF as operator options.
     """
-    if proposed <= doser.min_rate:
+    if proposed <= 0.0:
+        return [0.0]
+    if proposed < doser.min_rate:
+        return [doser.min_rate, 0.0]
+    if proposed == doser.min_rate:
         return [doser.min_rate]
 
     steps = (proposed - doser.min_rate) / doser.increment

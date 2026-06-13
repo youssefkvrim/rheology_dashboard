@@ -41,6 +41,9 @@ MAX_DELTA_PER_ADJUSTMENT: float = 0.002
 MAX_DELTA_PER_DAY: float = 0.048
 ROLLING_WINDOW_HOURS: int = 72
 PENDING_TTL_HOURS: int = 4
+POST_ADJUST_MIN_WINDOW_HOURS: int = 6
+CONFLICT_NOTE: str = "Déviations opposées — l'eau seule ne peut pas corriger toutes les propriétés. Validation métier requise."
+DECREASE_NOTE: str = "Réduction du débit: ralentit la dilution future, ne peut pas augmenter la densité."
 
 # ---------------------------------------------------------------------------
 # Confidence scoring

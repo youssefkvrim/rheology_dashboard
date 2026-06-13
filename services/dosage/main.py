@@ -26,13 +26,23 @@ from pathlib import Path
 
 from analytics import compute_stats
 from clock import now_utc
-from config import DOSER_CONFIGS, PENDING_TTL_HOURS, PROFILES, ROLLING_WINDOW_HOURS
+from config import (
+    CONFLICT_NOTE,
+    DECREASE_NOTE,
+    DOSER_CONFIGS,
+    MIN_MEASUREMENTS_FOR_EVAL,
+    PENDING_TTL_HOURS,
+    POST_ADJUST_MIN_WINDOW_HOURS,
+    PROFILES,
+    ROLLING_WINDOW_HOURS,
+)
 from data_store import (
     compute_rolling_average,
     confirm_adjustment,
     get_all_adjustments,
     get_confirmed_adjustments_window,
     get_current_flow_rate,
+    get_last_confirmed_adjustment,
     get_last_status,
     get_measurements_window,
     get_pending_adjustment,
@@ -98,6 +108,30 @@ def _pending_is_stale(pending: AdjustmentRecord) -> bool:
     return pending.timestamp < now_utc() - timedelta(hours=PENDING_TTL_HOURS)
 
 
+def _decision_measurements(bt: BarbotineType) -> tuple[list[Measurement], float, bool]:
+    last_confirmed = get_last_confirmed_adjustment(bt)
+    window_hours = float(ROLLING_WINDOW_HOURS)
+    degraded = False
+
+    if last_confirmed is not None:
+        elapsed_hours = max(
+            0.0,
+            (now_utc() - last_confirmed.timestamp).total_seconds() / 3600,
+        )
+        window_hours = max(
+            float(POST_ADJUST_MIN_WINDOW_HOURS),
+            min(float(ROLLING_WINDOW_HOURS), elapsed_hours),
+        )
+
+    measurements = get_measurements_window(bt, window_hours)
+    if last_confirmed is not None and len(measurements) < MIN_MEASUREMENTS_FOR_EVAL:
+        degraded = True
+        window_hours = float(ROLLING_WINDOW_HOURS)
+        measurements = get_measurements_window(bt, ROLLING_WINDOW_HOURS)
+
+    return measurements, window_hours, degraded
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -137,9 +171,9 @@ def cmd_decide(args: argparse.Namespace) -> None:
             bt.value, outcome.verdict.value.upper(), outcome.detail,
         )
 
-    measurements = get_measurements_window(bt, ROLLING_WINDOW_HOURS)
+    measurements, window_hours, window_degraded = _decision_measurements(bt)
     if not measurements:
-        log.warning("No measurements in the last %d h for %s.", ROLLING_WINDOW_HOURS, bt.value)
+        log.warning("No measurements in the last %.1f h for %s.", window_hours, bt.value)
         sys.exit(0)
 
     avg = compute_rolling_average(measurements)
@@ -149,14 +183,17 @@ def cmd_decide(args: argparse.Namespace) -> None:
 
     temp_str = f" t={avg.temperature:.1f}C" if avg.temperature is not None else ""
     log.info(
-        "[%s] 72h avg over %d readings: d=%.4f v=%.2f cp=%.2f%s",
-        bt.value, len(measurements), avg.density, avg.viscosity, avg.covering_power, temp_str,
+        "[%s] %.1fh avg over %d readings: d=%.4f v=%.2f cp=%.2f%s",
+        bt.value, window_hours, len(measurements),
+        avg.density, avg.viscosity, avg.covering_power, temp_str,
     )
+    if window_degraded:
+        log.warning("[%s] Short post-adjustment window under-sampled; fell back to 72h.", bt.value)
 
     previous_status = get_last_status(bt)
     status = classify_reading(avg, profile, previous_status)
     confidence = compute_confidence(avg, profile)
-    scenario_id, decision = resolve_scenario(status)
+    scenario_id, decision, conflict = resolve_scenario(status)
 
     log.info(
         "[%s] Scenario #%02d | D=%s V=%s CP=%s => %s",
@@ -166,6 +203,10 @@ def cmd_decide(args: argparse.Namespace) -> None:
         status.covering_power.value.upper(),
         _decision_label(decision),
     )
+    if conflict:
+        log.warning("[%s] %s", bt.value, CONFLICT_NOTE)
+    if decision == Decision.DECREASE:
+        log.info("[%s] %s", bt.value, DECREASE_NOTE)
     log.info(
         "[%s] Confidence: d=%.2f v=%.2f cp=%.2f | severity=%.2f",
         bt.value, confidence.density, confidence.viscosity,

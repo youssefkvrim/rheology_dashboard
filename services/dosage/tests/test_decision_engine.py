@@ -109,13 +109,13 @@ class TestScenarioDecisions(unittest.TestCase):
     def test_density_higher_always_increase(self):
         for visc in (H, C, L):
             for cp in (H, C, L):
-                _, dec = resolve_scenario(StatusTriplet(H, visc, cp))
+                _, dec, _ = resolve_scenario(StatusTriplet(H, visc, cp))
                 self.assertEqual(dec, INC, f"Failed for H/{visc}/{cp}")
 
     def test_density_lower_always_decrease(self):
         for visc in (H, C, L):
             for cp in (H, C, L):
-                _, dec = resolve_scenario(StatusTriplet(L, visc, cp))
+                _, dec, _ = resolve_scenario(StatusTriplet(L, visc, cp))
                 self.assertEqual(dec, DEC, f"Failed for L/{visc}/{cp}")
 
     def test_conform_density_specific(self):
@@ -125,7 +125,7 @@ class TestScenarioDecisions(unittest.TestCase):
             ((C, L, H), MNT), ((C, L, C), MNT), ((C, L, L), MNT),
         ]
         for (d, v, cp), expected in cases:
-            _, dec = resolve_scenario(StatusTriplet(d, v, cp))
+            _, dec, _ = resolve_scenario(StatusTriplet(d, v, cp))
             self.assertEqual(dec, expected, f"Failed for {d}/{v}/{cp}")
 
 
@@ -190,7 +190,7 @@ class TestDoserSnapping(unittest.TestCase):
     def test_below_minimum(self):
         doser = DoserConfig(min_rate=0.010, increment=0.002)
         options = snap_to_doser(0.005, doser)
-        self.assertEqual(options, [0.010])
+        self.assertEqual(options, [0.010, 0.0])
 
     def test_sorted_by_proximity(self):
         doser = DoserConfig(min_rate=0.010, increment=0.002)

@@ -159,6 +159,7 @@ class ApiStateMachineTest(unittest.TestCase):
         with (
             patch("api.evaluate_last_adjustment", return_value=None),
             patch("api.get_measurements_window", return_value=[measurement]),
+            patch("api.get_last_confirmed_adjustment", return_value=None),
             patch("api.get_last_status", return_value=None),
             patch("api.get_current_flow_rate", return_value=0.019),
             patch("api.get_confirmed_adjustments_window", return_value=[]),
@@ -184,6 +185,7 @@ class ApiStateMachineTest(unittest.TestCase):
         with (
             patch("main.evaluate_last_adjustment", return_value=None),
             patch("main.get_measurements_window", return_value=[measurement]),
+            patch("main.get_last_confirmed_adjustment", return_value=None),
             patch("main.get_last_status", return_value=None),
             patch("main.get_current_flow_rate", return_value=0.019),
             patch("main.get_confirmed_adjustments_window", return_value=[]),

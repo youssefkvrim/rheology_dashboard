@@ -42,6 +42,17 @@ SCENARIO_TABLE: dict[tuple[PropertyStatus, PropertyStatus, PropertyStatus], tupl
 }
 # fmt: on
 
+CONFLICT_TRIPLETS: set[tuple[PropertyStatus, PropertyStatus, PropertyStatus]] = {
+    (H, L, L),
+    (H, L, C),
+    (H, C, L),
+    (L, H, H),
+    (L, H, C),
+    (L, C, H),
+    (C, H, L),
+    (C, L, H),
+}
+
 
 # ---------------------------------------------------------------------------
 # Continuous confidence scoring
@@ -127,5 +138,7 @@ def classify_reading(
     )
 
 
-def resolve_scenario(status: StatusTriplet) -> tuple[int, Decision]:
-    return SCENARIO_TABLE[status.as_tuple()]
+def resolve_scenario(status: StatusTriplet) -> tuple[int, Decision, bool]:
+    triplet = status.as_tuple()
+    scenario_id, decision = SCENARIO_TABLE[triplet]
+    return scenario_id, decision, triplet in CONFLICT_TRIPLETS
