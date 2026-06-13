@@ -3,6 +3,7 @@
 ## 2026-06-13
 
 - TC1 `/api/slurries` stale timestamp correction — done — `GET /api/slurries` now preserves every slurry id even when the aggregate timestamp cannot be parsed, omitting `last` for that item while still logging skipped timestamp counts.
+- TC2 ship accepted Phase 0–2 work — done — fast-forwarded `phase-2/corrections` into `phase-2/performance`, fast-forwarded `main` through `phase-0/restore` (`8107809`), `phase-1/hygiene` (`54b60e0`), and corrected Phase 2 (`758dd1e`), tagged `v0.5.0-restored`, `v0.5.1`, and `v0.6.0`, and pushed `main`, all phase branches, the correction branch, and tags to `origin`. Verified `git branch --merged main` lists the phase branches, `git tag` shows the required tags, and `main`, `origin/main`, and `HEAD` matched at `758dd1e` after the push.
 - TC3 CSV skipped-row response — already satisfied in current code — both CSV import success responses and the 409 conflict response include `skipped`.
 - TC4 Jetlab operator checklist — done — added `docs/JETLAB_CHECKLIST.md` with the T0.1 curl/SQL diagnostics, migration steps, computed-column log check, latest-all timing evidence, Express-only deployment switch, and cold-load/card verification; linked it from `README.md`.
 
