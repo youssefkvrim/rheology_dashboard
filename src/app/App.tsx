@@ -131,8 +131,10 @@ export function App() {
                 const initials = parts.length >= 2
                   ? (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
                   : base.charAt(0).toUpperCase();
-                // TODO: this is a temp hack lol - hardcoded role for one user, needs real permissions from server
-                const roleLabel = (email.toLowerCase() === 'youssef.karim@safrangroup.com') ? 'Editor' : (user?.level === 3 ? 'Editor' : user?.level === 2 ? 'Read & Export' : 'Read-only');
+                const roleSet = new Set((user?.roles || []).map((r) => r.toLowerCase()));
+                const roleLabel = roleSet.has('admin') || roleSet.has('editor') || user?.level === 3
+                  ? 'Editor'
+                  : user?.level === 2 ? 'Read & Export' : 'Read-only';
                 return (
                   <>
               <div className="user-meta" style={{ textAlign: 'right' }}>

@@ -18,11 +18,11 @@ export default function Profile() {
   });
   const [email, setEmail] = useState<string>(user?.email || '');
   const [phoneRaw, setPhoneRaw] = useState<string>('');
-  // hardcoded role check lol, only youssef gets editor
-  const [role, setRole] = useState<string>(() => {
-    const e = user?.email?.toLowerCase() || '';
-    return e === 'youssef.karim@safrangroup.com' ? 'Editor' : 'Read-only';
-  });
+  const role = (() => {
+    const roleSet = new Set((user?.roles || []).map((r) => r.toLowerCase()));
+    if (roleSet.has('admin') || roleSet.has('editor') || user?.level === 3) return 'Editor';
+    return user?.level === 2 ? 'Read & Export' : 'Read-only';
+  })();
 
   // password change stuff
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -345,7 +345,7 @@ export default function Profile() {
         </p>
         <button
           onClick={() => setShowAdminDialog(true)}
-          disabled={role === 'Admin'}
+          disabled={role === 'Editor'}
           style={{ marginTop: 8 }}
         >
           {t('profile.requestRights')}

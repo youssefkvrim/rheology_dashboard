@@ -44,9 +44,11 @@ function inferLevel(email?: string, groups?: string[], roles?: string[]): AuthLe
   const roleWrite = String((import.meta as any)?.env?.VITE_SSO_ROLE_WRITE || '').toLowerCase();
 
   let level: AuthLevel = 1;
+  if (roleSet.has('admin') || roleSet.has('editor')) return 3;
+  if (roleSet.has('export') || roleSet.has('read-export') || roleSet.has('read_export')) level = 2;
   // if ur not a safran employee u just get the lowest access, sorry
   const isSafran = lowerEmail.endsWith('@safrangroup.com');
-  if (!isSafran) return 1;
+  if (!isSafran) return level;
 
   // level 2 = can download/export stuff
   if (
@@ -85,7 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const username = sessionStorage.getItem('userId') || '';
             const role = (sessionStorage.getItem('role') || 'user').toLowerCase();
             if (username || email) {
-              const level = inferLevel(email, [], []);
+              const level = inferLevel(email, [], [role]);
               setIsAuthenticated(true);
               setUser({ email, username, roles: [role], groups: [], level, token: null });
             } else {
@@ -154,7 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const username = sessionStorage.getItem('userId') || '';
           const role = (sessionStorage.getItem('role') || 'user').toLowerCase();
           if (username || email) {
-            const level = inferLevel(email, [], []);
+            const level = inferLevel(email, [], [role]);
             setIsAuthenticated(true);
             setUser({ email, username, roles: [role], groups: [], level, token: null });
           }
@@ -197,5 +199,3 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
-
-

@@ -38,11 +38,11 @@ The newest production data was imported around **October 2025** (see `data/data 
 
 **RC-4 (security, severity-ordered):**
 1. **CRITICAL — account takeover:** `POST /api/auth/reset-request` returns the reset token **in the HTTP response** to any unauthenticated caller. Anyone who knows a username can reset that user's password.
-2. **CRITICAL:** plaintext passwords (`pfx`, `safranpfx`, `pfxpfxpfx`) hardcoded in `server/index.cjs`, committed to git history. Treat all 4 as compromised.
+2. **CRITICAL:** plaintext passwords hardcoded in `server/index.cjs`, committed to git history. Treat all 4 as compromised.
 3. **HIGH:** `JWT_SECRET` falls back to the literal `'CHANGE_ME_IN_PRODUCTION'` if env is missing.
 4. **HIGH:** all read endpoints (`/api/slurries`, `/api/rheology*`, `/api/alerts/latest`, `GET /api/user-prefs`) are unauthenticated → industrial production data readable by anyone with network access.
 5. **HIGH:** `PUT /api/user-prefs` authenticates the caller but takes `userId` from the query string → any logged-in user can overwrite any other user's prefs/bounds (bounds drive the Critical/Warning alarms → integrity issue).
-6. **MEDIUM:** `cors()` wide open; raw DB error messages returned to clients (`e?.message`); no rate limiting on login; user-enumeration on reset (`404 User not found`); `trustServerCertificate` defaults true; `VITE_SSO_CLIENT_SECRET` present in env template (frontend bundles are public — client secret must never exist frontend-side); dead client-side `hashPassword()` (SHA-256) in `src/services/api.ts`.
+6. **MEDIUM:** `cors()` wide open; raw DB error messages returned to clients (`e?.message`); no rate limiting on login; user-enumeration on reset (`404 User not found`); `trustServerCertificate` defaults true; frontend SSO client-secret env var present in env template (frontend bundles are public — client secret must never exist frontend-side); dead client-side `hashPassword()` (SHA-256) in `src/services/api.ts`.
 
 ---
 
@@ -311,12 +311,12 @@ File: `server/index.cjs`:
 7. Audit log: create `db/migrations/004_audit.sql` (`audit_log(id BIGINT IDENTITY PK, user_id NVARCHAR(64), action NVARCHAR(32), detail NVARCHAR(MAX), at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET())`). In `index.cjs`, after successful `point` insert/update, CSV import, prefs write, login, and password reset: `INSERT` a row (action ∈ `login`, `reset`, `point.write`, `csv.import`, `prefs.write`; detail = JSON summary, no secrets). Failures to audit must not fail the request (try/catch + warn). Skip silently when table absent.
 
 ### T4.6 — Frontend/secrets hygiene
-1. Remove `VITE_SSO_CLIENT_SECRET` from `vault/secrets.env` template text, `README.md`, and any code reference (Keycloak public clients use PKCE only — already configured with `pkceMethod: 'S256'`). Tell the operator (via `EXECUTION_LOG.md`) to rotate that client secret in Keycloak since it sat in an env file.
+1. Remove the frontend SSO client-secret env var from `vault/secrets.env` template text, `README.md`, and any code reference (Keycloak public clients use PKCE only — already configured with `pkceMethod: 'S256'`). Tell the operator (via `EXECUTION_LOG.md`) to rotate that client secret in Keycloak since it sat in an env file.
 2. Operator actions to record as required in `EXECUTION_LOG.md`: rotate `MSSQL_PASSWORD`, set a fresh 64-byte random `JWT_SECRET` (`openssl rand -base64 64`), run seed-users.
-3. `src/app/App.tsx` line ~135: delete the hardcoded `youssef.karim@safrangroup.com → 'Editor'` role hack; derive the label purely from `user.level`/JWT role.
+3. `src/app/App.tsx` line ~135: delete the hardcoded email-to-role label hack; derive the label purely from `user.level`/JWT role.
 4. Move the Jetlab hostnames in `vite.config.ts` `allowedHosts` to env: `VITE_ALLOWED_HOSTS` (comma-separated, parsed in the config via `process.env`), defaulting to `[]`. Dev-only file but internal hostnames don't belong in a repo.
 
-**Phase 4 done when:** unauthenticated `curl` to every data endpooint returns 401; reset-request leaks nothing; no plaintext credentials in the codebase (`git grep -iE "pfx'|safranpfx"` returns nothing); tag `v0.8.0`.
+**Phase 4 done when:** unauthenticated `curl` to every data endpooint returns 401; reset-request leaks nothing; no plaintext credentials in the codebase (repository secret grep returns nothing); tag `v0.8.0`.
 
 ---
 
