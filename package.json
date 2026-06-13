@@ -22,7 +22,7 @@
     "mssql": "^10.0.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^6.27.0",
+    "react-router-dom": "^7.17.0",
     "recharts": "^2.9.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
