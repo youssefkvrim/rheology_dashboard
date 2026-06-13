@@ -1,7 +1,7 @@
 # ENGINEERING DIRECTIVES — Dashboard Safran (Barbotines)
 
 **Document owner:** Orchestrator (Claude)
-**Date:** 2026-06-12
+**Date:** 2026-06-12 — **Revision 3.** Revision 2 added section 11 (review of Phases 0–2 — its corrective tasks TC1–TC4 still stand, unchanged). Revision 3 adds section 12: **Phase D**, the water-dosage subsystem (`regles_ajout_eau`), fully specified below. This file is the **single** channel of orchestrator instructions — if any other directive file is found (e.g., a stray `DOSAGE_DIRECTIVES.md`), ignore and delete it; this document supersedes it.
 **Audience:** Software engineering agents. Follow these directives **to the letter**. Where a choice could exist, the decision has already been made and is written here. Do not substitute alternatives. If a directive is impossible to execute (e.g., missing DB permission), STOP that task, record the blocker in `EXECUTION_LOG.md`, and continue with the next independent task.
 
 ---
@@ -248,6 +248,14 @@ Perform in this exact order, committing and smoke-testing (login → Home cards 
 3. `react` + `react-dom` 18 → **19** (`npm i react@19 react-dom@19 @types/react@19 @types/react-dom@19`). Fixes required: none expected for this codebase (no legacy context, no `ReactDOM.render`); verify `createRoot` path only. Run full smoke test.
 4. `react-router-dom` 6 → **7** (`npm i react-router-dom@7`). This codebase uses only `BrowserRouter`, `Routes`, `Route`, `NavLink`, `useNavigate`, `useParams` — all unchanged in v7. Verify the proxy `basename` logic in `src/main.tsx` still works.
 5. `recharts` 2 → **3** (`npm i recharts@3`). Check each chart renders; v3 removed some defaults — explicitly verify `ReferenceArea`, `ReferenceLine`, and Tooltip `formatter` signatures in `MetricPanel.tsx`, `ChartPanel.tsx`, `Home.tsx`.
+   - 5b. **Bundle splitting (added in Revision 2):** the production JS bundle is a single 765 kB chunk. In `vite.config.ts` add:
+     ```ts
+     build: { rollupOptions: { output: { manualChunks: {
+       vendor: ['react', 'react-dom', 'react-router-dom'],
+       charts: ['recharts'],
+     } } } }
+     ```
+     Acceptance: no emitted chunk above 500 kB minified; app loads and all charts render.
 6. `express` 4 → **5** (`npm i express@5`). Required code changes in `server/index.cjs`: the SPA fallback regex route `app.get(/^(?!\/api\/).*/)` keeps working (regex routes are still supported); confirm `req.query` immutability does not break (we only read). Run all endpoint smoke tests with `curl`.
 7. `mssql` 10 → **11** (`npm i mssql@11`). Verify pool config keys unchanged and bulk import still works against a test table.
 8. `keycloak-js` 23 → **26** (`npm i keycloak-js@26`). The only usage is `init/login/logout/tokenParsed` in `features/auth/` — verify signatures.
@@ -361,3 +369,184 @@ Log results per phase in `EXECUTION_LOG.md` with date and commit hash.
 - No secrets or passwords in code, all data behind JWT auth, reset flow safe, rate-limited, audited (Phase 4).
 - Auto-refresh, alert bell, SMTP support/reset emails, tests, supervised deployment (Phase 5).
 - Version `v0.9.0`, every phase tagged, every action logged in `EXECUTION_LOG.md`.
+
+---
+
+## 11. ORCHESTRATOR REVIEW #1 — audit of Phases 0–2 (2026-06-12)
+
+I independently verified the delivered code (not just `EXECUTION_LOG.md`). Verdict: **work accepted with corrections.** Quality is high — Home filter removal, i18n in all 4 languages, `tsExpr()/paramExpr()` dual path, `ROW_NUMBER()` latest-all, LTTB downsampling, CSV legacy-timestamp normalization, compression/static caching, startup DDL, calmed health polling, repo restructure, and both migration scripts were all implemented as specified. `npx tsc --noEmit` and `npm run build` pass. The Detail.tsx `'all'`-range edge case was handled correctly without being told. Good work.
+
+The following items are defects or gaps. Execute the corrective tasks below **before starting Phase 3**, on a branch `phase-2/corrections`, then proceed to Phase 3 (which now includes task 5b, bundle splitting).
+
+### Defect D1 — `/api/slurries` can now hide entire slurries (functional, fix required)
+`server/index.cjs`, `GET /api/slurries` (~line 388): a slurry whose `MAX(ts)` is unparseable is `continue`d out of the response entirely. Since `barbotineStore` builds the card list from this endpoint, one bad timestamp format erases a barbotine from the dashboard — re-creating the exact failure class Phase 0 was meant to eliminate. This was a literal reading of T0.3; the directive was over-broad and the spec is hereby amended:
+- **TC1:** In `/api/slurries` only, when `toMs(r.ts)` is not finite, still push `{ id: String(r.id_slurry) }` (omit `last`), and count it in the `warnSkippedTimestamps` warning. The skip-row rule remains correct for the three series endpoints (`/api/rheology`, `/api/rheology/all`, `/api/rheology/latest-all`), where a point without a valid time cannot be plotted.
+- Acceptance: a row with `timestamp = 'garbage'` in a test dataset still yields its slurry in `/api/slurries` (with no `last` field), and Home renders its card as offline/no-data.
+
+### Defect D2 — git protocol not followed: nothing is shipped (process, fix required)
+`main` still points at the pre-overhaul snapshot (`910a2d7`). All Phase 0–2 work lives only on the stacked phase branches; no `v0.5.0-restored`, `v0.5.1`, or `v0.6.0` tags exist. Whatever Jetlab deploys from, the restored dashboard is **not deployed**.
+- **TC2:** The done-criteria are amended: runtime evidence that requires Jetlab/DB access is **deferred to the operator checklist (TC4)** and no longer blocks merging. Therefore: fast-forward merge `phase-0/restore` → `main`, tag `v0.5.0-restored` at `8107809`; merge `phase-1/hygiene`, tag `v0.5.1` at `54b60e0`; merge `phase-2/performance` (after TC1 lands on `phase-2/corrections` and is merged into it), tag `v0.6.0` at the resulting head. Push branches and tags to `origin`.
+- Acceptance: `git branch --merged main` lists all three phase branches; `git tag` shows the three new tags; `origin/main` is up to date.
+
+### Gap D3 — CSV import response omits the skipped-row count (minor, fix required)
+T0.4 step 3 required unparseable CSV rows to be "counted in the response as `skipped`". The counter exists (~line 832) but is not returned to the caller — silently dropped rows violate ground rule "no silent caps".
+- **TC3:** Include `skipped` (number) in both success responses of `POST /api/rheology/import-csv` (`{ ok:true, inserted, updated, skipped }` and `{ ok:true, insertedCount, skipped }`) and in the 409 conflict response. No frontend change required yet; `Donnees.tsx` surfacing comes with T5.6.
+
+### Gap D4 — blocked verifications must become an operator checklist (documentation, fix required)
+T0.1 diagnostics, the `latest-all` before/after timings, migration application, and cold-load timing were all blocked because this workspace cannot reach `y005n8c.rd1.rf1` or Jetlab. That is expected and accepted — but the obligations must not evaporate.
+- **TC4:** Create `docs/JETLAB_CHECKLIST.md` containing, verbatim and in order: (1) the T0.1 curl + read-only SQL diagnostics; (2) apply `db/migrations/001_normalize_timestamps.sql` (preview SELECT first, then the transaction harness) and `002_perf_indexes.sql`; (3) restart the server and confirm the log line `[perf] computed columns: present`; (4) time `GET /api/rheology/latest-all` for all slurries before/after the index (record both in `EXECUTION_LOG.md`); (5) the T0.6 deployment switch — stop the vite process, serve only `node server/index.cjs` per `docs/DEPLOY_JETLAB.md`; (6) confirm cold load < 2 s and that Home shows cards with last-measure dates. Each item gets a checkbox and an "evidence" line to fill in. Link this file from `README.md` under Deployment.
+
+### Observation O1 (no action now)
+`Detail.tsx` sends one combined `start` for all panels (min across ranges) — acceptable; per-panel fetching would be a Phase 5+ refinement, do not change it now.
+
+### Status board
+| Phase | Status | Tag |
+|---|---|---|
+| 0 — Restore | ✅ accepted (TC1 amends T0.3, TC2 ships it) | `v0.5.0-restored` after TC2 |
+| 1 — Hygiene | ✅ accepted | `v0.5.1` after TC2 |
+| 2 — Performance | ✅ accepted with corrections TC1/TC3 | `v0.6.0` after TC1–TC3 |
+| 2c — Corrections | 🔲 **do now** (TC1–TC4, branch `phase-2/corrections`) | — |
+| 3 — Dependencies | 🔲 **green-lit** after 2c (now includes task 5b) | `v0.7.0` |
+| 4 — Security | 🔲 next after 3 — unchanged, T4.1/T4.2 remain CRITICAL | `v0.8.0` |
+| 5 — Features | 🔲 after 4 | `v0.9.0` |
+| D0–D3 — Dosage standalone | 🔲 may run **in parallel** with 2c/3/4 (separate squad) — see section 12 | — |
+| D4 — Dosage integration | 🔲 blocked until Phase 4 merged + métier sign-off (T-D3.4) | `v1.0.0` |
+| Operator | 🔲 `docs/JETLAB_CHECKLIST.md` must be run by a human on Jetlab | — |
+
+---
+
+## 12. PHASE D — Water-dosage subsystem (`regles_ajout_eau`) — added in Revision 3
+
+A parallel project exists at `/regles_ajout_eau-main` (Python ≥3.10: FastAPI + SQLite, stdlib core). Industrial context: lost-wax casting (procédé cire perdue) — wax patterns are dipped in ceramic slurry to build shell layers (M7-3 contact, 2CN2 intermédiaire, R55 renfort). When rheology drifts (density/viscosity/pouvoir couvrant), demineralized-water dosers dilute the slurry. The service classifies the 3 key properties against target ranges, looks up one of 27 scenarios, and proposes a bounded doser flow-rate change which an operator confirms. It closes the loop this dashboard only observes, and **it will be incorporated into this project** once perfected. Everything below is part of these orders; same ground rules as section 1.
+
+### 12.1 Orchestrator audit (treat as established facts)
+
+**Verdict: the architecture is genuinely good for a first attempt.** Clean module separation (`decision_engine` / `flow_controller` / `evaluator` / `data_store` / `api`), hysteresis anti-oscillation, per-adjustment (±0.002 L/h) and daily (±0.048 L/day) safety caps, doser hardware snapping, human-in-the-loop confirmation, outcome auto-evaluation, audit trail. The 26 decision-engine tests pass (verified 2026-06-12). It is, however, **not production-ready**; one defect is disqualifying:
+
+**D-CRIT-1 — `POST /decisions/{type}` mutates state (MUST FIX FIRST).** `api.py` `make_decision()` ends with `insert_adjustment(record)` **and** `set_flow_state(bt, proposed, status)` — before any confirmation. Consequences: merely *asking* for a recommendation changes the recorded `current_rate` to the proposed rate, so the next decide proposes from the already-mutated rate → compounding drift of the system's belief with no physical change; `cumulative_delta_today()` sums `proposed_delta` over **all** adjustments in 24 h (`get_adjustments_window` does not filter `user_confirmed=1`) → unconfirmed proposals burn the daily safety budget; a dashboard auto-refresh calling decide would corrupt state within hours. The CLI flow has the same structure.
+
+**Major defects:**
+- **D-MAJ-2 — physics asymmetry not modeled:** water addition is one-directional. INCREASE dilutes (density↓, viscosity↓, pc↓); DECREASE only *slows future dilution* — it cannot raise density. Scenarios 19–27 are "stop making it worse," not corrections, and the UI/docs must say so. Conflicting triplets — e.g. (H, L, L): density high but viscosity & pc low — get a blanket INCREASE that fixes one property while pushing two others further out. Water alone cannot resolve a two-sided deviation.
+- **D-MAJ-3 — duplicated sources of truth:** `config.py` hardcodes `PropertyRange` per type, while SQL Server `rheology` already carries per-slurry `usl`/`lsl` that operators maintain and the dashboard displays. Measurements are likewise duplicated (SQL Server *and* this SQLite). Divergence is guaranteed.
+- **D-MAJ-4 — identity mismatch:** the service knows 3 *families* (M7, 2CN2, R55); the plant and dashboard track *instances* (`M7-3_006`, `2CN2_005`, `R55_010`…). A doser is plumbed to one physical tank holding one instance. No mapping exists.
+- **D-MAJ-5 — post-adjustment averaging:** decisions use a 72 h rolling average; right after a confirmed adjustment that average is dominated by pre-adjustment readings → the engine re-sees the old deviation and proposes again → systematic overcorrection.
+- **D-MAJ-6 — no backtest:** never run against real history, although the archived dashboard data (`../Dashboard-Safran-archive/data/`, and SQL Server itself, including real H2O débit-eau records) is exactly the dataset to replay on.
+
+**Minor defects:** `allow_origins=["*"]` with `allow_credentials=True` (spec-invalid combo) and zero auth on an endpoint that drives industrial equipment; naive `datetime.now()` everywhere (same bug family that broke the dashboard); deprecated `@app.on_event("startup")`; unconfirmed proposals can stack; rate-floor semantics inconsistent (flow floor 0 vs `min_rate=0.010`; `snap_to_doser` can never propose OFF unless ideal ≤ 0 exactly); evaluator ignores confounders (a second adjustment inside the 24 h evaluation window pollutes the verdict); tests cover only `decision_engine`; repo hygiene (`barbotine.db` binary with data committed, `__pycache__/`, `.DS_Store`, no `.gitignore`, no pinned versions, no `pyproject.toml`).
+
+**Non-negotiable principle (survives integration and all future work):** the software proposes; a human disposes. No code path may ever command a doser or treat a proposal as applied without explicit operator confirmation carrying the actually-set rate. Any future auto-actuation is out of scope and requires a separate safety review.
+
+### 12.2 Decided target architecture (do not relitigate)
+
+```
+┌────────────────────────── Jetlab host ──────────────────────────┐
+│  Browser ── HTTPS ──> Express (3001)                            │
+│      SPA: Moulage page becomes Dosage     server/index.cjs      │
+│                                            │            │       │
+│            JWT auth ──> /api/dosage/* ─ proxy ─> uvicorn (8100, │
+│                          (admin for writes)      127.0.0.1 only)│
+│                                            │     services/      │
+│            /api/rheology/* <── pulls ──────┘     dosage (Python)│
+│                  │                                  │           │
+│            SQL Server `rheology`              SQLite (decisions,│
+│            (measurements + usl/lsl =          outcomes, mapping │
+│             SINGLE source of truth)           — NOT measurements)│
+└──────────────────────────────────────────────────────────────────┘
+```
+1. **Monorepo:** the project moves into this repo at `services/dosage/` (Phase D1); the original folder is archived to `../Dashboard-Safran-archive/regles_ajout_eau-main/` (same pattern as T1.1).
+2. **Separate process, same host:** FastAPI/uvicorn stays its own service on `127.0.0.1:8100`. No CORS, no own user auth — reachable **only** through the Express proxy, which enforces JWT (Phase D4).
+3. **Measurements:** SQL Server `rheology` is the single source. At decide time the service pulls the mapped slurry's last-72 h density/viscosity/pc series from the Express API. SQLite keeps only its own domain: adjustments, outcomes, flow state, mapping, settings. `POST /measurements` survives only for backtesting (flagged internal).
+4. **Limits:** `PropertyRange` is fetched at decide time from `GET /api/rheology/bounds?slurryId=...` (the same usl/lsl the dashboard charts). `config.py` profiles remain solely as **fallback** when bounds are absent; the response states which source was used.
+5. **Mapping:** SQLite table `mapping(barbotine_type PK, slurry_id, updated_at)` + read/set endpoints; surfaced in the dashboard Params page (admin only). A doser with no mapping cannot decide (409).
+6. **UI:** the placeholder **Moulage page becomes the dosage page** (the doseuses live in the moulage workshop).
+7. **Sequencing:** D0 → D1 → D2 → D3 → D4. **D4 must not start before dashboard Phase 4 (security) is merged AND the T-D3.4 métier sign-off is recorded.** D0–D3 may run in parallel with dashboard Phases 2c/3/4 by a separate squad (different folders, no merge conflicts).
+
+### 12.3 PHASE D0 — Critical fixes (branch `phase-d0/critical`, work in the current folder)
+
+**T-D0.1 — Propose/commit state machine.** Files: `api.py`, `main.py`, `data_store.py`, `flow_controller.py`.
+1. `POST /decisions/{type}` (and CLI `decide`) becomes **read-only on flow state**: compute the proposal, insert the adjustment row with `user_confirmed=0`, **never call `set_flow_state`**. Before inserting, mark any existing pending adjustment for that type as superseded: add column `superseded INTEGER NOT NULL DEFAULT 0` (migration in `init_db` via `ALTER TABLE` guarded by `PRAGMA table_info`), set it to 1 on all prior `user_confirmed=0` rows for the type. `get_pending_adjustment` filters `superseded=0`.
+2. `POST /decisions/{type}/confirm` is the **only** writer of `flow_state`, using the operator's `actual_rate`. Reject (`409`) a confirm whose pending adjustment is older than 4 hours — constant `PENDING_TTL_HOURS = 4` in `config.py`.
+3. Add `POST /decisions/{type}/reject` marking the pending row `superseded=1`, no state change (CLI: `reject` command). Log it.
+4. Daily cap: sum `abs(actual_rate - current_rate)` over `user_confirmed=1` rows only, via new `get_confirmed_adjustments_window()`; keep `get_adjustments_window` for analytics.
+5. Tests (new `tests/test_state_machine.py`): decide twice → one pending, first superseded, `flow_state` unchanged; confirm → `flow_state` = actual rate; reject → no change; daily cap ignores unconfirmed proposals; stale confirm → 409. Minimum 10 assertions.
+
+**T-D0.2 — Network posture.** `api.py`: delete the CORS middleware entirely. Document in the module docstring: run as `uvicorn api:app --host 127.0.0.1 --port 8100` (no `--reload` in production). Until D4, the service must never bind 0.0.0.0.
+
+**T-D0.3 — Timezone-aware time.** Replace every `datetime.now()` (`api.py`, `data_store.py`, `flow_controller.py`, `evaluator.py`, `main.py`) with a single helper `now_utc()` in a new `clock.py` returning `datetime.now(timezone.utc)` (injectable for tests). Stored ISO strings carry `+00:00`; never mix naive/aware. The existing `barbotine.db` holds placeholder data — regenerating it is the accepted migration.
+
+**Phase D0 done when:** all old + new tests pass (`python3 -m unittest discover -s tests`), decide is provably side-effect-free on flow state. Log in `EXECUTION_LOG.md`.
+
+### 12.4 PHASE D1 — Hygiene & monorepo move (branch `phase-d1/move`)
+
+1. Create `services/dosage/` in this repo; copy all `.py`, `tests/`, `requirements.txt`, and `MANUAL.md`, `PROPOSITIONS.md`, `REINFORCEMENT_LEARNING.md` into it. **Do not copy:** `barbotine.db`, `__pycache__/`, `.DS_Store`, any stray `*.md` directive file. Archive the original folder to `../Dashboard-Safran-archive/regles_ajout_eau-main/`.
+2. Append to `.gitignore`:
+```
+services/dosage/*.db
+services/dosage/*.db-wal
+services/dosage/*.db-shm
+__pycache__/
+*.pyc
+.venv/
+```
+3. Add `services/dosage/pyproject.toml` (name `barbotine-dosage`, `requires-python = ">=3.10"`, deps `fastapi>=0.115`, `uvicorn>=0.32`, `pydantic>=2.9`; dev extra: `pytest`, `httpx`). Keep `requirements.txt` mirroring it. New `services/dosage/README.md`: purpose, run commands, test commands, and the non-negotiable principle from 12.1.
+4. `DB_PATH` becomes env-configurable: `DOSAGE_DB_PATH` (default `services/dosage/barbotine.db`), read once in `data_store.py`.
+5. Replace deprecated `@app.on_event("startup")` with a lifespan context manager.
+6. Convert the service's `PROJECT_OVERVIEW.md` into `services/dosage/docs/OVERVIEW.md`, updated for the D0 state machine.
+
+**Done when:** `python3 -m unittest discover` passes from `services/dosage/`, dashboard `npm run build` unaffected, archive contains the original.
+
+### 12.5 PHASE D2 — Correctness, tests, backtest (branch `phase-d2/correctness`)
+
+**T-D2.1 — Conflict-aware decision table.** `decision_engine.py`: module-level `CONFLICT_TRIPLETS` — triplets whose deviations point in opposite directions and cannot be resolved by water alone: `(H,L,L), (H,L,C), (H,C,L), (L,H,H), (L,H,C), (L,C,H), (C,H,L), (C,L,H)`. `resolve_scenario` returns a third element `conflict: bool`. API response gains `conflict` and, when true, `conflict_note: "Déviations opposées — l'eau seule ne peut pas corriger toutes les propriétés. Validation métier requise."` The proposal is still computed (the table's priority stands until D3 review) but the UI must badge it; CLI prints a ⚠ line. Tests for all 8 triplets.
+
+**T-D2.2 — DECREASE semantics surfaced.** When decision is DECREASE, response gains `note: "Réduction du débit: ralentit la dilution future, ne peut pas augmenter la densité."` (constant in `config.py`). No behavior change — honesty in the contract.
+
+**T-D2.3 — Post-adjustment window.** Averaging window becomes `max(6, min(72, hours_since_last_confirmed))` (constant `POST_ADJUST_MIN_WINDOW_HOURS = 6`). If fewer than `MIN_MEASUREMENTS_FOR_EVAL` readings fall in it, fall back to plain 72 h **and** set `window_degraded: true` in the response. Tests: decision right after a confirm uses the short window.
+
+**T-D2.4 — Rate floor semantics.** `snap_to_doser`: when `0 < proposed < min_rate`, return `[min_rate, 0.0]` (nearest first) — the operator may legitimately switch the doser OFF. Docstring + boundary tests.
+
+**T-D2.5 — Evaluator confounder guard.** When another confirmed adjustment exists inside the post-window of the one being evaluated, record verdict `PENDING` with detail `"confounded by adjustment #<id>"` and mark it evaluated (not retried forever). Test included.
+
+**T-D2.6 — Coverage for untested modules.** New `tests/test_flow_controller.py` (raw delta scaling incl. severity≈0 fallback, daily cap incl. exactly-exhausted budget, snapping incl. exact-step float edge), `tests/test_evaluator.py` (all five verdicts + confounder), `tests/test_api.py` (FastAPI `TestClient`: full decide→confirm cycle on tmp-path DB, 404 no measurements, 400 bad type, reject, stale-confirm 409). Target ≥ 60 tests total, all green.
+
+**T-D2.7 — Backtest harness (the "does it actually work" gate).** New `services/dosage/backtest.py` (CLI: `python backtest.py --csv <export.csv> --type M7 --slurry M7-3_006`):
+1. Input: a dashboard CSV export (`id_rheology,...` schema) for one slurry. Map density/viscosity/pc rows into a chronological measurement stream; use the `usl`/`lsl` columns to build the `PropertyRange`s actually in force.
+2. Replay day by day: feed measurements, run one decision per day (injected clock via `clock.py`), record proposals.
+3. Output `backtest_report_<slurry>.md`: proposals timeline vs the slurry's real recorded H2O (débit eau) values from the same CSV; count of decide-days where engine direction (INC/DEC/MNT) matched the operators' actual flow-change direction; conflict triplets encountered; daily-cap saturation days. **No pass/fail threshold** — the report is evidence for the D3 métier review.
+4. Run on at least 3 archived slurries (one per family) from `../Dashboard-Safran-archive/data/data csv/`; commit the three reports under `services/dosage/docs/backtests/`.
+
+**Done when:** ≥ 60 tests green, three backtest reports committed, `EXECUTION_LOG.md` updated.
+
+### 12.6 PHASE D3 — Calibration & métier sign-off (branch `phase-d3/calibration`)
+
+**T-D3.1 — Bounds adapter.** New `services/dosage/bounds_source.py`: `fetch_ranges(slurry_id) -> dict | None` calling `GET {DASHBOARD_API_BASE}/api/rheology/bounds?slurryId=...` with header `X-Internal-Token: $INTERNAL_TOKEN` (env: `DASHBOARD_API_BASE` default `http://127.0.0.1:3001`, `INTERNAL_TOKEN`). Decide uses these ranges when all three properties have both bounds; otherwise falls back to `config.PROFILES` and sets `ranges_source: "fallback_profile"` (vs `"dashboard_bounds"`). Timeout 3 s; on network failure → fallback + warning log. Tests with a stubbed HTTP layer.
+
+**T-D3.2 — Mapping table.** SQLite `mapping(barbotine_type TEXT PK, slurry_id TEXT NOT NULL, updated_at TEXT NOT NULL)`; endpoints `GET /mapping`, `PUT /mapping/{type}` (body `{slurry_id}`); decide returns 409 `"no slurry mapped for <type>"` when unset. CLI `map` command. Tests.
+
+**T-D3.3 — Measurement pull.** Production decide stops reading SQLite measurements: new `measurements_source.py` pulls `GET /api/rheology/all?slurryId=<mapped>&params=density,viscosity,pc&start=<window>` through the same internal-token channel and converts to readings (timestamp-aligned join on nearest-hour buckets; readings missing one of the three properties in a bucket are dropped; bucket logic unit-tested). Env flag `DOSAGE_STANDALONE=1` restores the SQLite path for backtests/dev.
+
+**T-D3.4 — Métier review pack.** Generate `services/dosage/docs/DECISION_TABLE_REVIEW.md`: the 27 scenarios in a table (statuses, decision, conflict flag, one plain-French rationale line each), the three backtest reports linked, and an empty sign-off block (`Validé par: ____ Date: ____ Modifications demandées: ____`). **The user must walk this through the process engineer — software agents cannot validate process physics.** Requested table changes come back as a config edit, not code.
+
+**T-D3.5 — Doser hardware truth.** `DOSER_CONFIGS` values (min 0.010, steps 0.002/0.003, base flows) get a `# PLACEHOLDER — confirm against nameplate` comment; the review pack gets a second sign-off block for these numbers. Until signed, the API response carries `calibration: "UNVERIFIED"`.
+
+**Done when:** adapters tested, review pack committed, and — gate for D4 — the user confirms the métier sign-off happened (record date + name in `EXECUTION_LOG.md`).
+
+### 12.7 PHASE D4 — Dashboard integration (branch `phase-d4/integration` — **blocked until dashboard Phase 4 is merged AND the T-D3.4 sign-off is recorded**)
+
+**T-D4.1 — Express proxy.** `server/index.cjs`: env `DOSAGE_API_BASE` (default `http://127.0.0.1:8100`) and `INTERNAL_TOKEN` (required; startup-fail if missing while `DOSAGE_API_BASE` is set). Route family `app.use('/api/dosage', requireAuth, ...)`: forward method/path/query/JSON body via Node global `fetch` (no new dependency), adding `X-Internal-Token`. Writes (`POST`, `PUT`) additionally require `req.user.role === 'admin'`. 502 with generic message on upstream failure. The Python service verifies `X-Internal-Token` on every request (FastAPI dependency) — defense in depth even on localhost. Audit-log every proxied write (action `dosage.decide|confirm|reject|mapping`).
+
+**T-D4.2 — Moulage page becomes Dosage.** Rewrite `src/pages/Moulage.tsx`: per-family card (current rate L/h, base rate, delta, doser step, last statuses as colored dots reusing existing badge classes, mapped slurry, `calibration` badge if UNVERIFIED); admin-only button `Proposer un ajustement` → decide → modal showing decision, scenario id, statuses, confidence bars, severity, conflict ⚠ banner when `conflict`, DECREASE note when present, `ranges_source`, doser options as radio buttons + manual override field → `Confirmer` (sends actual rate) / `Rejeter`. Below: adjustments history table (last 7 days) and analytics line (adjustments/day, drift alert badge). All strings via `t()` with new `dosage.*` keys in **all 4 languages**. Non-admins see read-only status.
+
+**T-D4.3 — Params page (admin section).** Mapping editor — per family, a dropdown of slurry ids from `useBarbotineStore`, saving via `PUT /api/dosage/mapping/{type}`.
+
+**T-D4.4 — Deployment.** Extend `docs/DEPLOY_JETLAB.md` and `docs/JETLAB_CHECKLIST.md`: Python 3.10+ venv setup, `pm2 start "uvicorn api:app --host 127.0.0.1 --port 8100" --name safran-dosage --cwd services/dosage` (or the nohup fallback), env vars (`INTERNAL_TOKEN` via `openssl rand -hex 32`, same value in `vault/secrets.env` for Express), boot-order note (dosage may start before Express; adapters retry). Health: Express `GET /api/dosage/health` proxies through — add it to the checklist.
+
+**T-D4.5 — End-to-end evidence.** With both services local and a seeded SQLite + mocked rheology bounds: decide→confirm round trip through the proxy with a real JWT, curl transcript (or screenshot) into `EXECUTION_LOG.md`.
+
+**Done when:** full flow works behind JWT, non-admin cannot write, i18n complete, docs updated. Tag `v1.0.0` — observation + decision in one product.
+
+### 12.8 Explicit non-goals for Phase D
+- No automatic actuation of dosers (no PLC/Modbus/OPC-UA work) — proposals only; the operator confirms with the physically-set rate.
+- No reinforcement learning (`REINFORCEMENT_LEARNING.md` stays a roadmap; revisit only after ≥ 6 months of confirmed-adjustment + outcome data exists).
+- No expansion beyond the 27-scenario table (temperature/age/trend extensions in `MANUAL.md` wait for D3 sign-off feedback).
+- No second database engine: SQLite stays for dosage-domain data in v1; unification into SQL Server is a candidate for v1.1, not now.
