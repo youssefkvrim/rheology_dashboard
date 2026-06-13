@@ -48,15 +48,15 @@ export function reportError(message: string) {
 export type AuthUser = { userId: string; email: string; role: 'admin' | 'user' };
 
 // sends ur login info to the server and gets back a token if it works
-export async function loginApi(identifier: string, password: string): Promise<{ ok: boolean; token?: string; user?: AuthUser }> {
+export async function loginApi(identifier: string, password: string): Promise<{ ok: boolean; token?: string; user?: AuthUser; mustReset?: boolean; reason?: string }> {
   const res = await fetch(`${BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier, password }),
   });
   const data = await res.json();
-  if (!res.ok) return { ok: false };
-  return { ok: true, token: data.token, user: data.user };
+  if (!res.ok) return { ok: false, reason: data?.error || 'Unknown error' };
+  return { ok: true, token: data.token, user: data.user, mustReset: !!data.mustReset };
 }
 
 // asks the server to send a password reset email

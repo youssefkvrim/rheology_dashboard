@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { loginApi, requestPasswordReset, ASSET_BASE, apiHealth, setAuthToken } from '../services/api';
 import { useAuth } from '../features/auth/AuthContext';
 import { useTranslation } from '../i18n';
@@ -6,6 +7,7 @@ import { useTranslation } from '../i18n';
 // the login page - u gotta get past this before seeing anything else
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const t = useTranslation();
+  const navigate = useNavigate();
   const [user, setUser] = useState('');
   const [pass, setPass] = useState('');
   const [err, setErr] = useState('');
@@ -44,7 +46,14 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             setErr(''); setBusy(true);
             try {
               const res = await loginApi(user, pass);
-              if (!res.ok || !res.token || !res.user) { setErr(t('login.invalidCredentials')); return; }
+              if (!res.ok || !res.user) { setErr(res.reason === 'auth unavailable' ? t('login.serverError') : t('login.invalidCredentials')); return; }
+              if (res.mustReset) {
+                await requestPasswordReset(res.user.userId);
+                alert(t('login.resetRequested'));
+                navigate('/reset');
+                return;
+              }
+              if (!res.token) { setErr(t('login.invalidCredentials')); return; }
               setAuthToken(res.token);
               // stash user info so we can use it across the app
               sessionStorage.setItem('userId', res.user.userId);

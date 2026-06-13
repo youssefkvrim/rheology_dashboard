@@ -238,34 +238,31 @@ async function probeComputedColumns() {
   console.log(`[perf] computed columns: ${HAS_COMPUTED_COLS ? 'present' : 'absent'}`);
 }
 
-// ──────────── user accounts (hardcoded for now) ────────────
-
-// these are the users - passwords get hashed when the server first boots up
-const USERS = [
-  { userId: 'youssef.karim', email: 'youssef.karim@safrangroup.com', role: 'admin', _plaintext: 'pfx', hash: null },
-  { userId: 'wala.gloulou', email: 'wala.gloulou@safrangroup.com', role: 'admin', _plaintext: 'safranpfx', hash: null },
-  { userId: 'benoit.marie', email: 'benoit.marie@safrangroup.com', role: 'admin', _plaintext: 'pfxpfxpfx', hash: null },
-  { userId: 'aliz.pinto-mora', email: 'aliz.pinto-mora@safrangroup.com', role: 'admin', _plaintext: 'pfxpfxpfx', hash: null },
-];
+// ──────────── user accounts ────────────
 
 // keeps track of password reset links so ppl can change their password
 const resetTokens = new Map();
 
-// hashes all the passwords the strong way so nobody can reverse them
-async function initUserHashes() {
-  for (const u of USERS) {
-    if (!u.hash) {
-      u.hash = await scryptHash(u._plaintext);
-      // nuke the plaintext password from memory once it's hashed
-      delete u._plaintext;
-    }
-  }
-}
-
 // finds a user by their username or email, not case sensitive
-function findUser(identifier) {
+async function findUser(identifier) {
   const id = identifier.trim().toLowerCase();
-  return USERS.find(u => u.userId.toLowerCase() === id || u.email.toLowerCase() === id) || null;
+  const pool = await getPool();
+  const { recordset } = await pool.request()
+    .input('id', sql.NVarChar(256), id)
+    .query(`
+      SELECT TOP 1 user_id, email, role, pwd_hash, must_reset
+      FROM app_users
+      WHERE LOWER(user_id)=@id OR LOWER(email)=@id
+    `);
+  const row = recordset[0];
+  if (!row) return null;
+  return {
+    userId: row.user_id,
+    email: row.email,
+    role: row.role,
+    hash: row.pwd_hash,
+    mustReset: !!row.must_reset,
+  };
 }
 
 // ──────────── input validation schemas ────────────
@@ -329,13 +326,22 @@ app.post('/api/auth/login', async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'identifier and password required' });
   const { identifier, password } = parsed.data;
-  const user = findUser(identifier);
+  let user;
+  try {
+    user = await findUser(identifier);
+  } catch (e) {
+    console.warn('[auth] login unavailable: %s', e?.message || 'error');
+    return res.status(503).json({ error: 'auth unavailable' });
+  }
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
   try {
     const valid = await scryptVerify(user.hash, password);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
   } catch {
     return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  if (user.mustReset) {
+    return res.json({ ok: true, mustReset: true, user: { userId: user.userId, email: user.email, role: user.role } });
   }
   // password checks out - make a token that expires in 8 hours
   const token = jwt.sign({ sub: user.userId, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
@@ -346,7 +352,12 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/reset-request', async (req, res) => {
   const identifier = String(req.body?.identifier || '').trim();
   const token = crypto.randomUUID();
-  const user = identifier ? findUser(identifier) : null;
+  let user = null;
+  try {
+    user = identifier ? await findUser(identifier) : null;
+  } catch (e) {
+    console.warn('[auth] reset lookup failed: %s', e?.message || 'error');
+  }
   if (user) {
     resetTokens.set(token, { userId: user.userId, email: user.email, expiresAt: Date.now() + 15 * 60 * 1000 });
     console.log('[auth] password reset token for %s: %s (valid 15min)', user.userId, token);
@@ -364,9 +375,22 @@ app.post('/api/auth/reset-confirm', async (req, res) => {
     resetTokens.delete(token);
     return res.status(400).json({ error: 'Token expired' });
   }
-  const user = findUser(entry.userId);
-  if (!user) return res.status(400).json({ error: 'User not found' });
-  user.hash = await scryptHash(newPassword);
+  const hash = await scryptHash(newPassword);
+  try {
+    const pool = await getPool();
+    const { rowsAffected } = await pool.request()
+      .input('user_id', sql.NVarChar(64), entry.userId)
+      .input('pwd_hash', sql.NVarChar(512), hash)
+      .query(`
+        UPDATE app_users
+        SET pwd_hash=@pwd_hash, must_reset=0, updated_at=SYSDATETIMEOFFSET()
+        WHERE user_id=@user_id
+      `);
+    if (!rowsAffected[0]) return res.status(400).json({ error: 'User not found' });
+  } catch (e) {
+    console.warn('[auth] reset-confirm unavailable: %s', e?.message || 'error');
+    return res.status(503).json({ error: 'auth unavailable' });
+  }
   resetTokens.delete(token);
   res.json({ ok: true });
 });
@@ -969,7 +993,6 @@ if (fs.existsSync(distDir)) {
 // ──────────── let's gooo ────────────
 
 (async () => {
-  await initUserHashes();
   await probeComputedColumns();
   try {
     await ensureUserPrefsTable();
