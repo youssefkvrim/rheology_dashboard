@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 const sql = require('mssql');
+const nodemailer = require('nodemailer');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const { lttb } = require('./lib/lttb.cjs');
@@ -74,8 +75,15 @@ if (!JWT_SECRET || JWT_SECRET === 'CHANGE_ME_IN_PRODUCTION') {
 const JWT_EXPIRY = '8h';
 const JWT_ISSUER = 'safran-dashboard';
 const JWT_AUDIENCE = 'safran-dashboard';
+const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = String(process.env.SMTP_USER || '').trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || '');
+const SMTP_FROM = String(process.env.SMTP_FROM || '').trim();
+const SUPPORT_TO = 'youssef.karim@safrangroup.com';
 const LEGACY_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}(?::?\d{2})?$/;
 let HAS_COMPUTED_COLS = false;
+let mailTransporter = null;
 
 function tsExpr() {
   return HAS_COMPUTED_COLS ? '[ts_dto]' : "TRY_CONVERT(datetimeoffset, REPLACE([timestamp],' ','T'))";
@@ -167,6 +175,42 @@ function fail(res, e) {
 
 function downsampleSeries(points, maxPoints) {
   return points.length > maxPoints ? lttb(points, maxPoints) : points;
+}
+
+function isSmtpConfigured() {
+  return Boolean(SMTP_HOST && SMTP_FROM);
+}
+
+function getMailTransporter() {
+  if (!isSmtpConfigured()) return null;
+  if (!mailTransporter) {
+    const port = Number.isFinite(SMTP_PORT) && SMTP_PORT > 0 ? SMTP_PORT : 587;
+    mailTransporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port,
+      secure: port === 465,
+      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    });
+  }
+  return mailTransporter;
+}
+
+async function sendConfiguredMail(message) {
+  const transporter = getMailTransporter();
+  if (!transporter) return false;
+  await transporter.sendMail({ from: SMTP_FROM, ...message });
+  return true;
+}
+
+function publicBaseUrl(req) {
+  const proto = String(req.get('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
+  const host = String(req.get('x-forwarded-host') || req.get('host') || `localhost:${PORT}`).split(',')[0].trim();
+  const prefix = String(req.get('x-forwarded-prefix') || '').replace(/\/+$/, '');
+  return `${proto}://${host}${prefix}`;
+}
+
+function resetLinkFor(req, token) {
+  return `${publicBaseUrl(req)}/reset?token=${encodeURIComponent(token)}`;
 }
 
 // rips apart a CSV line properly - handles quotes and commas inside fields and all that mess
@@ -338,6 +382,12 @@ const querySlurryId = z.object({
   slurryId: z.string().min(1),
 });
 
+const supportSchema = z.object({
+  category: z.enum(['bug', 'feature', 'access', 'question', 'other']),
+  subject: z.string().trim().min(1).max(160),
+  message: z.string().trim().min(1).max(5000),
+});
+
 // middleware that checks if the request data is valid before it hits the route
 function validate(schema) {
   return (req, res, next) => {
@@ -422,7 +472,29 @@ app.post('/api/auth/reset-request', async (req, res) => {
   }
   if (user) {
     resetTokens.set(token, { userId: user.userId, email: user.email, expiresAt: Date.now() + 15 * 60 * 1000 });
-    console.log('[auth] password reset token for %s: %s (valid 15min)', user.userId, token);
+    let emailed = false;
+    try {
+      emailed = await sendConfiguredMail({
+        to: user.email,
+        subject: 'Lien de réinitialisation - Dashboard Safran',
+        text: [
+          'Bonjour,',
+          '',
+          'Une demande de réinitialisation de mot de passe a été reçue pour le Dashboard Safran.',
+          `Lien de réinitialisation: ${resetLinkFor(req, token)}`,
+          '',
+          'Ce lien expire dans 15 minutes.',
+          'Si vous n\'êtes pas à l\'origine de cette demande, ignorez ce message.',
+        ].join('\n'),
+      });
+    } catch (e) {
+      console.warn('[auth] reset email failed for %s: %s', user.userId, e?.message || 'error');
+    }
+    if (emailed) {
+      console.log('[auth] password reset email queued for %s (valid 15min)', user.userId);
+    } else {
+      console.log('[auth] password reset token for %s: %s (valid 15min)', user.userId, token);
+    }
   }
   res.json({ ok: true });
 });
@@ -465,6 +537,31 @@ app.get('/api/health', async (_req, res) => {
   if (isDbCircuitOpen()) return res.json({ ok: false, circuit: 'open' });
   try {
     await getPool();
+    res.json({ ok: true });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+app.post('/api/support', requireAuth, async (req, res) => {
+  const parsed = supportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten().fieldErrors });
+  if (!isSmtpConfigured()) return res.status(503).json({ error: 'smtp unavailable' });
+  const { category, subject, message } = parsed.data;
+  try {
+    const sent = await sendConfiguredMail({
+      to: SUPPORT_TO,
+      replyTo: req.user.email || undefined,
+      subject: `[Support - ${category}] ${subject}`,
+      text: [
+        `User: ${req.user.userId}`,
+        `Email: ${req.user.email || 'n/a'}`,
+        `Category: ${category}`,
+        '',
+        message,
+      ].join('\n'),
+    });
+    if (!sent) return res.status(503).json({ error: 'smtp unavailable' });
     res.json({ ok: true });
   } catch (e) {
     fail(res, e);

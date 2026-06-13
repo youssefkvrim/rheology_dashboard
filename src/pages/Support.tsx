@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../features/auth/AuthContext';
 import { useTranslation } from '../i18n';
+import { sendSupportRequest } from '../services/api';
 
 type Category = 'bug' | 'feature' | 'access' | 'question' | 'other';
 
@@ -20,7 +21,18 @@ export default function Support() {
   const [sending, setSending] = useState<boolean>(false);
   const [sent, setSent] = useState<boolean>(false);
 
-  // sends the support ticket (well, kinda - its just a mailto link for now)
+  const openMailtoFallback = () => {
+    const mailto = `mailto:youssef.karim@safrangroup.com?subject=${encodeURIComponent(`[Support - ${CATEGORIES[category]}] ${subject}`)}&body=${encodeURIComponent(`${user?.email || t('common.user')}\n\n${t('support.category')}: ${CATEGORIES[category]}\n\n${message}`)}`;
+    window.open(mailto, '_blank');
+  };
+
+  const markSent = () => {
+    setSent(true);
+    setSubject('');
+    setMessage('');
+  };
+
+  // sends the support ticket through the backend, with mailto when SMTP is absent
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim() || !message.trim()) {
@@ -30,16 +42,21 @@ export default function Support() {
 
     setSending(true);
     try {
-      // TODO: gotta replace this with real email sending from the backend
-      await new Promise((resolve) => setTimeout(resolve, 1500)); // fake delay to look legit
-
-      // opens ur email app with a pre-filled support message as a fallback
-      const mailto = `mailto:youssef.karim@safrangroup.com?subject=${encodeURIComponent(`[Support - ${CATEGORIES[category]}] ${subject}`)}&body=${encodeURIComponent(`${user?.email || t('common.user')}\n\n${t('support.category')}: ${CATEGORIES[category]}\n\n${message}`)}`;
-      window.open(mailto, '_blank');
-
-      setSent(true);
-      setSubject('');
-      setMessage('');
+      const result = await sendSupportRequest({
+        category,
+        subject: subject.trim(),
+        message: message.trim(),
+      });
+      if (result.ok) {
+        markSent();
+        return;
+      }
+      if (result.status === 503) {
+        openMailtoFallback();
+        markSent();
+        return;
+      }
+      alert(t('support.sendError'));
     } catch (err) {
       alert(t('support.sendError'));
     } finally {
@@ -161,7 +178,7 @@ export default function Support() {
         </div>
       </div>
 
-      {/* heads up that this is not fully wired up yet */}
+      {/* heads up about the no-SMTP fallback */}
       <div className="panel" style={{ marginTop: 16, background: 'rgba(234,179,8,0.1)', borderColor: 'rgba(234,179,8,0.3)' }}>
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
           <strong>Note :</strong> {t('support.note')}

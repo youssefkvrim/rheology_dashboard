@@ -37,6 +37,20 @@ server now defaults `MSSQL_TRUST_CERT` to `false`, Jetlab must explicitly set:
 MSSQL_TRUST_CERT=true
 ```
 
+Support and password-reset emails use SMTP when these variables are set:
+
+```bash
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=
+```
+
+`SMTP_HOST` and `SMTP_FROM` are required to enable email delivery. Without them,
+the support form falls back to a pre-filled `mailto:` link and password reset
+requests keep the server-log token fallback.
+
 ## Verification
 
 ```bash

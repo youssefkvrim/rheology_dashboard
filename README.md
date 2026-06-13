@@ -68,12 +68,21 @@ MSSQL_ENCRYPT=true
 MSSQL_TRUST_CERT=false
 JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET
 ALLOWED_ORIGINS=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=
 ```
 
 Set `ALLOWED_ORIGINS` only when the browser frontend is served from a different
 origin than the Express backend. Leave it blank for same-origin `dist/` serving.
 If the SQL Server uses a self-signed certificate, set `MSSQL_TRUST_CERT=true`
 explicitly in `vault/secrets.env`.
+Set `SMTP_HOST` and `SMTP_FROM` to enable support emails and password-reset
+emails. When SMTP is not configured, `/api/support` returns `503` and the
+frontend opens a pre-filled `mailto:` fallback; reset-request keeps the
+server-log token fallback.
 
 Frontend (`.env.local` optional):
 ```

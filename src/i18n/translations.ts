@@ -206,7 +206,7 @@ const fr = {
   'support.faqBoundsAnswer': 'Sur chaque graphique, cliquez sur "…" puis modifiez les valeurs min/max dans la section "Conformité".',
   'support.faqRights': 'Comment demander des droits supplémentaires ?',
   'support.faqRightsAnswer': 'Allez dans votre Profil et cliquez sur "Demander des droits supérieurs". Un administrateur traitera votre demande.',
-  'support.note': 'Note : Le formulaire utilise actuellement mailto comme fallback. Pour une vraie intégration SMTP/SAML, configurer les variables dans vault/secrets.env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) et implémenter POST /api/support. -voir démarche avec Javid MOUGAMADOU',
+  'support.note': 'Note : Le formulaire envoie via le serveur SMTP quand il est configuré ; sinon il ouvre un email prérempli.',
   'support.fillAllFields': 'Veuillez remplir tous les champs.',
   'support.sendError': 'Erreur lors de l\'envoi. Veuillez réessayer.',
 
@@ -440,7 +440,7 @@ const en: Record<TranslationKey, string> = {
   'support.faqBoundsAnswer': 'On each chart, click "…" then modify the min/max values in the "Compliance" section.',
   'support.faqRights': 'How to request additional rights?',
   'support.faqRightsAnswer': 'Go to your Profile and click "Request higher rights". An administrator will process your request.',
-  'support.note': 'Note: The form currently uses mailto as a fallback. For real SMTP/SAML integration, configure variables in vault/secrets.env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) and implement POST /api/support. -see process with Javid MOUGAMADOU',
+  'support.note': 'Note: The form sends through the SMTP server when configured; otherwise it opens a pre-filled email.',
   'support.fillAllFields': 'Please fill in all fields.',
   'support.sendError': 'Error sending. Please try again.',
 
@@ -674,7 +674,7 @@ const it: Record<TranslationKey, string> = {
   'support.faqBoundsAnswer': 'Su ogni grafico, clicca su "…" poi modifica i valori min/max nella sezione "Conformità".',
   'support.faqRights': 'Come richiedere diritti aggiuntivi?',
   'support.faqRightsAnswer': 'Vai al tuo Profilo e clicca su "Richiedi diritti superiori". Un amministratore elaborerà la tua richiesta.',
-  'support.note': 'Nota: Il modulo utilizza attualmente mailto come fallback. Per una vera integrazione SMTP/SAML, configurare le variabili in vault/secrets.env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) e implementare POST /api/support. -vedere processo con Javid MOUGAMADOU',
+  'support.note': 'Nota: Il modulo invia tramite il server SMTP quando configurato; altrimenti apre un\'email precompilata.',
   'support.fillAllFields': 'Compilare tutti i campi.',
   'support.sendError': 'Errore durante l\'invio. Riprovare.',
 
@@ -908,7 +908,7 @@ const es: Record<TranslationKey, string> = {
   'support.faqBoundsAnswer': 'En cada gráfico, haga clic en "…" luego modifique los valores min/max en la sección "Conformidad".',
   'support.faqRights': '¿Cómo solicitar derechos adicionales?',
   'support.faqRightsAnswer': 'Vaya a su Perfil y haga clic en "Solicitar derechos superiores". Un administrador procesará su solicitud.',
-  'support.note': 'Nota: El formulario actualmente usa mailto como respaldo. Para una integración real SMTP/SAML, configure las variables en vault/secrets.env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) e implemente POST /api/support. -ver proceso con Javid MOUGAMADOU',
+  'support.note': 'Nota: El formulario envía a través del servidor SMTP cuando está configurado; de lo contrario abre un email precompletado.',
   'support.fillAllFields': 'Por favor complete todos los campos.',
   'support.sendError': 'Error al enviar. Por favor intente de nuevo.',
 

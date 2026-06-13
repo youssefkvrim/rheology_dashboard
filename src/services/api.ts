@@ -154,6 +154,31 @@ export async function fetchAlertsLatest(slurryIds: string[]): Promise<LatestAler
   return (await res.json()) || {};
 }
 
+export type SupportRequest = {
+  category: 'bug' | 'feature' | 'access' | 'question' | 'other';
+  subject: string;
+  message: string;
+};
+
+export async function sendSupportRequest(payload: SupportRequest): Promise<{ ok: boolean; status: number; reason?: string }> {
+  try {
+    const res = await fetch(`${BASE}/support`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch((): { error?: string } => ({}));
+    if (!res.ok) {
+      reportError(`POST /support ${res.status}`);
+      return { ok: false, status: res.status, reason: data?.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, status: res.status };
+  } catch {
+    reportError('POST /support network error');
+    return { ok: false, status: 0, reason: 'network error' };
+  }
+}
+
 // gets the list of all slurries the server knows about
 export async function fetchSlurries(): Promise<Array<{ id: string; last?: number }>> {
   const res = await fetch(`${BASE}/slurries`, { cache: 'no-store', headers: authHeaders() });
