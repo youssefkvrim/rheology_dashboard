@@ -1,5 +1,11 @@
 # Execution Log
 
+## 2026-06-13
+
+- TC1 `/api/slurries` stale timestamp correction — done — `GET /api/slurries` now preserves every slurry id even when the aggregate timestamp cannot be parsed, omitting `last` for that item while still logging skipped timestamp counts.
+- TC3 CSV skipped-row response — already satisfied in current code — both CSV import success responses and the 409 conflict response include `skipped`.
+- TC4 Jetlab operator checklist — done — added `docs/JETLAB_CHECKLIST.md` with the T0.1 curl/SQL diagnostics, migration steps, computed-column log check, latest-all timing evidence, Express-only deployment switch, and cold-load/card verification; linked it from `README.md`.
+
 ## 2026-06-12
 
 - Pre-overhaul snapshot — done — committed existing working-tree state exactly as found with `chore: snapshot pre-overhaul working tree (scrypt swap, reset fix)` and tagged it `v0.4.1-pre-overhaul`.

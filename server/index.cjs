@@ -398,8 +398,10 @@ app.get('/api/slurries', async (_req, res) => {
     const out = [];
     for (const r of rows) {
       const ms = toMs(r.ts);
-      if (!Number.isFinite(ms)) { skipped++; continue; }
-      out.push({ id: String(r.id_slurry), last: ms });
+      const item = { id: String(r.id_slurry) };
+      if (Number.isFinite(ms)) item.last = ms;
+      else skipped++;
+      out.push(item);
     }
     warnSkippedTimestamps(skipped);
     res.json(out);

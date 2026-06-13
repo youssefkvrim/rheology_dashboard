@@ -103,6 +103,7 @@ VITE_WHITELIST_WRITE=...
 
 ## Deployment notes
 - Jetlab must run the Express process, not the Vite dev/preview server. See `docs/DEPLOY_JETLAB.md`.
+- Jetlab-only diagnostics, migrations, timing checks, and deployment evidence are tracked in `docs/JETLAB_CHECKLIST.md`.
 - Build with `node ./node_modules/vite/bin/vite.js build`, then run `node server/index.cjs`.
 - The Express server serves both `dist/` and `/api/*` on `BACKEND_PORT` (default `3001`). Point the Jetlab proxy/route to port `3001`.
 
