@@ -59,9 +59,11 @@ if (ALLOWED_ORIGINS.length) {
 }
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false });
 const authLimiter = rateLimit({ windowMs: 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/reset-request', authLimiter);
-app.use('/api/', apiLimiter);
+if (process.env.NODE_ENV !== 'test') {
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/reset-request', authLimiter);
+  app.use('/api/', apiLimiter);
+}
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.text({ type: ['text/*', 'application/csv', 'text/csv'], limit: '10mb' }));
@@ -84,6 +86,7 @@ const SUPPORT_TO = 'youssef.karim@safrangroup.com';
 const LEGACY_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}(?::?\d{2})?$/;
 let HAS_COMPUTED_COLS = false;
 let mailTransporter = null;
+let testPool = null;
 
 function tsExpr() {
   return HAS_COMPUTED_COLS ? '[ts_dto]' : "TRY_CONVERT(datetimeoffset, REPLACE([timestamp],' ','T'))";
@@ -123,11 +126,10 @@ function toMs(ts) {
     let s = String(ts).trim();
     if (!s) return NaN;
     if (s.indexOf(' ') !== -1) s = s.replace(' ', 'T');
-    // these regexes fix weird timezone formats so Date.parse doesn't freak out
-    const m = s.match(/([+-])(\d{2})(?!:)(?!\d)/);
-    if (m) s = s + ':00';
-    const m2 = s.match(/([+-])(\d{2})(\d{2})$/);
-    if (m2) s = s.replace(/([+-])(\d{2})(\d{2})$/, `${m2[1]}${m2[2]}:${m2[3]}`);
+    s = s.replace(/\s+([+-]\d{2}:?\d{2})$/, '$1');
+    // fix timezone suffixes like +02 or +0200 so Date.parse handles them consistently
+    s = s.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+    s = s.replace(/([+-]\d{2})$/, '$1:00');
     const ms = Date.parse(s);
     return Number.isFinite(ms) ? ms : NaN;
   } catch {
@@ -271,6 +273,7 @@ function isDbCircuitOpen() {
 }
 
 function getPool() {
+  if (testPool) return Promise.resolve(testPool);
   // circuit breaker - if the DB keeps failing we stop hammering it for a bit
   if (poolRetryCount >= POOL_MAX_RETRIES) {
     const elapsed = Date.now() - poolLastFailure;
@@ -1164,14 +1167,51 @@ if (SERVES_DIST) {
 
 // ──────────── let's gooo ────────────
 
-(async () => {
+async function startServer() {
   await probeComputedColumns();
   try {
     await ensureUserPrefsTable();
   } catch (e) {
     console.warn('[prefs] user_prefs bootstrap skipped: %s', e?.message || 'error');
   }
-  app.listen(PORT, () => {
+  return app.listen(PORT, () => {
     console.log(`[server] SQL Server API listening on ${PORT}`);
   });
-})();
+}
+
+function setTestPool(pool) {
+  testPool = pool;
+  poolPromise = undefined;
+  poolRetryCount = 0;
+  poolLastFailure = 0;
+}
+
+function clearTestState() {
+  testPool = null;
+  poolPromise = undefined;
+  poolRetryCount = 0;
+  poolLastFailure = 0;
+  resetTokens.clear();
+  mailTransporter = null;
+}
+
+if (require.main === module) {
+  startServer().catch((e) => {
+    console.error('[server] startup failed:', e);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  app,
+  startServer,
+  toMs,
+  toLegacyTs,
+  parseCsvLine,
+  __test: {
+    setPool: setTestPool,
+    clear: clearTestState,
+    scryptHash,
+    scryptVerify,
+  },
+};
