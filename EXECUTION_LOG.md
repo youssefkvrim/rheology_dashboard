@@ -16,6 +16,7 @@
 - T3.8 Keycloak 26 upgrade — done — installed `keycloak-js@26.2.4`. Reviewed auth usage and confirmed it is limited to constructor config plus `init`, `login`, `logout`, `tokenParsed`, and `token`. `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed; chunks remain below 500 kB. Runtime smoke: escalated `node server/index.cjs` served `/` with HTTP 200; `/api/health` returned the existing local SQL DNS 500.
 - T3.9 Node type pin — done — installed `@types/node@22.19.21`. `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed; runtime smoke served `/` with HTTP 200 and `/api/health` returned the existing local SQL DNS 500.
 - T3.10 Production audit — done — sandboxed `npm audit --omit=dev` failed because registry DNS was blocked; reran with network approval and it returned `found 0 vulnerabilities`. No `npm audit fix` was needed.
+- Phase 3 verification — partial but accepted for local environment — at commit `d6b9efc`, `node --check server/index.cjs`, `node --check server/lib/lttb.cjs`, `npx tsc --noEmit`, `npm run build`, and `npm audit --omit=dev` passed; production chunks stayed below 500 kB. Runtime smoke served `/` and `/barbotine/M7-3_006` with HTTP 200. Full SQL-backed smoke remains blocked locally because `y005n8c.rd1.rf1` cannot resolve from this workspace; `/api/health` returns the same known DNS 500 and Jetlab evidence remains delegated to `docs/JETLAB_CHECKLIST.md`.
 
 ## 2026-06-12
 
