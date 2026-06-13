@@ -140,7 +140,7 @@ export default function Profile() {
   };
 
   const handleForgotPassword = () => {
-    alert(t('login.resetEmailSent'));
+    alert(t('login.resetRequested'));
     setShowPasswordModal(false);
   };
 

@@ -60,7 +60,7 @@ export async function loginApi(identifier: string, password: string): Promise<{ 
 }
 
 // asks the server to send a password reset email
-export async function requestPasswordReset(identifier: string): Promise<{ ok: boolean; to?: string; reason?: string }> {
+export async function requestPasswordReset(identifier: string): Promise<{ ok: boolean; reason?: string }> {
   const res = await fetch(`${BASE}/auth/reset-request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -68,7 +68,7 @@ export async function requestPasswordReset(identifier: string): Promise<{ ok: bo
   });
   const data = await res.json();
   if (!res.ok) return { ok: false, reason: data?.error || 'Unknown error' };
-  return { ok: true, to: data.to };
+  return { ok: true };
 }
 
 // actually changes ur password using the reset token from the email

@@ -72,7 +72,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             try {
               const r = await requestPasswordReset(user || '');
               if (!r.ok) { setErr(r.reason || t('login.resetFailed')); return; }
-              alert(`${t('login.resetEmailSent')} ${r.to}`);
+              alert(t('login.resetRequested'));
             } catch {
               setErr(t('login.serverError'));
             } finally {

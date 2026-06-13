@@ -344,14 +344,14 @@ app.post('/api/auth/login', async (req, res) => {
 
 // step 1 of password reset - makes a one-time link that expires in 15 min
 app.post('/api/auth/reset-request', async (req, res) => {
-  const { identifier } = req.body || {};
-  if (!identifier) return res.status(400).json({ error: 'identifier required' });
-  const user = findUser(identifier);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const identifier = String(req.body?.identifier || '').trim();
   const token = crypto.randomUUID();
-  resetTokens.set(token, { userId: user.userId, email: user.email, expiresAt: Date.now() + 15 * 60 * 1000 });
-  // tbh in production this would send an email but for now we just return it
-  res.json({ ok: true, to: user.email, token });
+  const user = identifier ? findUser(identifier) : null;
+  if (user) {
+    resetTokens.set(token, { userId: user.userId, email: user.email, expiresAt: Date.now() + 15 * 60 * 1000 });
+    console.log('[auth] password reset token for %s: %s (valid 15min)', user.userId, token);
+  }
+  res.json({ ok: true });
 });
 
 // step 2 of password reset - actually changes ur password if the token is still valid

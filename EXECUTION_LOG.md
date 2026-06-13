@@ -17,6 +17,7 @@
 - T3.9 Node type pin — done — installed `@types/node@22.19.21`. `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed; runtime smoke served `/` with HTTP 200 and `/api/health` returned the existing local SQL DNS 500.
 - T3.10 Production audit — done — sandboxed `npm audit --omit=dev` failed because registry DNS was blocked; reran with network approval and it returned `found 0 vulnerabilities`. No `npm audit fix` was needed.
 - Phase 3 verification — partial but accepted for local environment — at commit `d6b9efc`, `node --check server/index.cjs`, `node --check server/lib/lttb.cjs`, `npx tsc --noEmit`, `npm run build`, and `npm audit --omit=dev` passed; production chunks stayed below 500 kB. Runtime smoke served `/` and `/barbotine/M7-3_006` with HTTP 200. Full SQL-backed smoke remains blocked locally because `y005n8c.rd1.rf1` cannot resolve from this workspace; `/api/health` returns the same known DNS 500 and Jetlab evidence remains delegated to `docs/JETLAB_CHECKLIST.md`.
+- T4.1 Reset-request takeover fix — done — `POST /api/auth/reset-request` now always returns `200 {ok:true}` without `token`, `to`, 404, or identifier validation leakage; existing users still get a server-log reset token for admin-mediated reset. Login/Profile reset alerts now use generic `login.resetRequested` text in fr/en/it/es. Verification: `node --check server/index.cjs`, `npx tsc --noEmit`, and `npm run build` passed; local reset-request smoke for nonexistent and empty identifiers both returned `200 {"ok":true}`.
 
 ## 2026-06-12
 
