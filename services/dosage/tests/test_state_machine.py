@@ -4,6 +4,7 @@ Tests for the propose/confirm/reject state machine.
 
 import sys
 import argparse
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+os.environ["DOSAGE_STANDALONE"] = "1"
 
 from fastapi import HTTPException
 
@@ -18,6 +20,7 @@ import api
 import main as cli
 from clock import now_utc
 from config import PENDING_TTL_HOURS
+from decision_context import MeasurementSelection
 from data_store import (
     confirm_adjustment,
     get_all_adjustments,
@@ -158,8 +161,10 @@ class ApiStateMachineTest(unittest.TestCase):
 
         with (
             patch("api.evaluate_last_adjustment", return_value=None),
-            patch("api.get_measurements_window", return_value=[measurement]),
-            patch("api.get_last_confirmed_adjustment", return_value=None),
+            patch(
+                "api.collect_decision_measurements",
+                return_value=MeasurementSelection([measurement], 72.0, False),
+            ),
             patch("api.get_last_status", return_value=None),
             patch("api.get_current_flow_rate", return_value=0.019),
             patch("api.get_confirmed_adjustments_window", return_value=[]),
@@ -184,8 +189,10 @@ class ApiStateMachineTest(unittest.TestCase):
 
         with (
             patch("main.evaluate_last_adjustment", return_value=None),
-            patch("main.get_measurements_window", return_value=[measurement]),
-            patch("main.get_last_confirmed_adjustment", return_value=None),
+            patch(
+                "main.collect_decision_measurements",
+                return_value=MeasurementSelection([measurement], 72.0, False),
+            ),
             patch("main.get_last_status", return_value=None),
             patch("main.get_current_flow_rate", return_value=0.019),
             patch("main.get_confirmed_adjustments_window", return_value=[]),

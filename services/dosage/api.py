@@ -20,39 +20,47 @@ from pydantic import BaseModel, Field
 from analytics import compute_stats
 from clock import now_utc
 from config import (
+    CALIBRATION_STATUS,
     CONFLICT_NOTE,
     DECREASE_NOTE,
     DOSER_CONFIGS,
-    MIN_MEASUREMENTS_FOR_EVAL,
     PENDING_TTL_HOURS,
-    POST_ADJUST_MIN_WINDOW_HOURS,
     PROFILES,
-    ROLLING_WINDOW_HOURS,
 )
 from data_store import (
     compute_rolling_average,
     confirm_adjustment,
     get_all_adjustments,
+    get_all_mappings,
     get_confirmed_adjustments_window,
     get_current_flow_rate,
-    get_last_confirmed_adjustment,
     get_last_status,
+    get_mapping,
     get_measurements_window,
     get_pending_adjustment,
     init_db,
     insert_adjustment,
     insert_measurement,
     reject_pending_adjustment,
+    set_mapping,
     set_flow_state,
     supersede_pending_adjustments,
 )
 from decision_engine import classify_reading, compute_confidence, resolve_scenario
+from decision_context import (
+    MappingRequiredError,
+    MeasurementSourceError,
+    collect_decision_measurements,
+    get_required_mapping,
+    select_profile,
+)
 from evaluator import evaluate_last_adjustment
 from flow_controller import compute_proposed_rate
 from models import (
     AdjustmentRecord,
     BarbotineType,
     Decision,
+    MappingRecord,
     Measurement,
     RheologyReading,
 )
@@ -92,6 +100,9 @@ class MeasurementInput(BaseModel):
 
 class DecisionResponse(BaseModel):
     barbotine_type: str
+    slurry_id: str | None
+    ranges_source: str
+    calibration: str
     adjustment_id: int
     scenario_id: int
     decision: str
@@ -130,7 +141,19 @@ class StatusResponse(BaseModel):
     base_rate: float
     delta_from_base: float
     doser_increment: float
+    mapped_slurry: str | None
+    calibration: str
     last_status: dict | None
+
+
+class MappingInput(BaseModel):
+    slurry_id: str = Field(..., min_length=1)
+
+
+class MappingResponse(BaseModel):
+    barbotine_type: str
+    slurry_id: str
+    updated_at: str
 
 
 class MeasurementRow(BaseModel):
@@ -189,30 +212,6 @@ def _pending_is_stale(pending: AdjustmentRecord) -> bool:
     return pending.timestamp < now_utc() - timedelta(hours=PENDING_TTL_HOURS)
 
 
-def _decision_measurements(bt: BarbotineType) -> tuple[list[Measurement], float, bool]:
-    last_confirmed = get_last_confirmed_adjustment(bt)
-    window_hours = float(ROLLING_WINDOW_HOURS)
-    degraded = False
-
-    if last_confirmed is not None:
-        elapsed_hours = max(
-            0.0,
-            (now_utc() - last_confirmed.timestamp).total_seconds() / 3600,
-        )
-        window_hours = max(
-            float(POST_ADJUST_MIN_WINDOW_HOURS),
-            min(float(ROLLING_WINDOW_HOURS), elapsed_hours),
-        )
-
-    measurements = get_measurements_window(bt, window_hours)
-    if last_confirmed is not None and len(measurements) < MIN_MEASUREMENTS_FOR_EVAL:
-        degraded = True
-        window_hours = float(ROLLING_WINDOW_HOURS)
-        measurements = get_measurements_window(bt, ROLLING_WINDOW_HOURS)
-
-    return measurements, window_hours, degraded
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -235,7 +234,13 @@ def add_measurement(body: MeasurementInput) -> dict:
 @app.post("/decisions/{btype}", response_model=DecisionResponse)
 def make_decision(btype: str) -> DecisionResponse:
     bt = _resolve_type(btype)
-    profile = PROFILES[bt]
+    try:
+        slurry_id = get_required_mapping(bt)
+    except MappingRequiredError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    profile_selection = select_profile(bt, slurry_id)
+    profile = profile_selection.profile
     doser = DOSER_CONFIGS[bt]
 
     eval_result = evaluate_last_adjustment(bt)
@@ -246,7 +251,14 @@ def make_decision(btype: str) -> DecisionResponse:
             "detail": eval_result.detail,
         }
 
-    measurements, window_hours, window_degraded = _decision_measurements(bt)
+    try:
+        selection = collect_decision_measurements(bt, slurry_id)
+    except MeasurementSourceError as exc:
+        raise HTTPException(503, f"measurement source unavailable: {exc}") from exc
+
+    measurements = selection.measurements
+    window_hours = selection.window_hours
+    window_degraded = selection.window_degraded
     if not measurements:
         raise HTTPException(404, f"No measurements in the last {int(window_hours)}h for {bt.value}")
 
@@ -285,6 +297,9 @@ def make_decision(btype: str) -> DecisionResponse:
 
     return DecisionResponse(
         barbotine_type=bt.value,
+        slurry_id=profile_selection.slurry_id,
+        ranges_source=profile_selection.ranges_source,
+        calibration=CALIBRATION_STATUS,
         adjustment_id=adj_id,
         scenario_id=scenario_id,
         decision=decision.value,
@@ -360,12 +375,15 @@ def get_status() -> list[StatusResponse]:
         base = PROFILES[bt].base_flow_rate
         doser = DOSER_CONFIGS[bt]
         last_st = get_last_status(bt)
+        mapping = get_mapping(bt)
         results.append(StatusResponse(
             barbotine_type=bt.value,
             current_rate=rate,
             base_rate=base,
             delta_from_base=round(rate - base, 6),
             doser_increment=doser.increment,
+            mapped_slurry=mapping.slurry_id if mapping else None,
+            calibration=CALIBRATION_STATUS,
             last_status={
                 "density": last_st.density.value,
                 "viscosity": last_st.viscosity.value,
@@ -384,18 +402,44 @@ def get_status_type(btype: str) -> StatusResponse:
     base = PROFILES[bt].base_flow_rate
     doser = DOSER_CONFIGS[bt]
     last_st = get_last_status(bt)
+    mapping = get_mapping(bt)
     return StatusResponse(
         barbotine_type=bt.value,
         current_rate=rate,
         base_rate=base,
         delta_from_base=round(rate - base, 6),
         doser_increment=doser.increment,
+        mapped_slurry=mapping.slurry_id if mapping else None,
+        calibration=CALIBRATION_STATUS,
         last_status={
             "density": last_st.density.value,
             "viscosity": last_st.viscosity.value,
             "covering_power": last_st.covering_power.value,
         } if last_st else None,
     )
+
+
+def _mapping_response(record: MappingRecord) -> MappingResponse:
+    return MappingResponse(
+        barbotine_type=record.barbotine_type.value,
+        slurry_id=record.slurry_id,
+        updated_at=record.updated_at.isoformat(),
+    )
+
+
+@app.get("/mapping", response_model=list[MappingResponse])
+def get_mapping_list() -> list[MappingResponse]:
+    return [_mapping_response(record) for record in get_all_mappings()]
+
+
+@app.put("/mapping/{btype}", response_model=MappingResponse)
+def put_mapping(btype: str, body: MappingInput) -> MappingResponse:
+    bt = _resolve_type(btype)
+    slurry_id = body.slurry_id.strip()
+    if not slurry_id:
+        raise HTTPException(422, "slurry_id must not be blank")
+    record = set_mapping(bt, slurry_id)
+    return _mapping_response(record)
 
 
 @app.get("/history/{btype}", response_model=list[MeasurementRow])

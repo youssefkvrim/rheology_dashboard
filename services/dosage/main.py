@@ -9,6 +9,7 @@ Usage:
     python main.py confirm <type> <actual_rate>
     python main.py reject <type>
     python main.py status [type]
+    python main.py map [type] [slurry_id]
     python main.py history <type> [--hours N]
     python main.py analytics <type> [--hours N]
     python main.py import-csv <file>
@@ -27,33 +28,40 @@ from pathlib import Path
 from analytics import compute_stats
 from clock import now_utc
 from config import (
+    CALIBRATION_STATUS,
     CONFLICT_NOTE,
     DECREASE_NOTE,
     DOSER_CONFIGS,
-    MIN_MEASUREMENTS_FOR_EVAL,
     PENDING_TTL_HOURS,
-    POST_ADJUST_MIN_WINDOW_HOURS,
     PROFILES,
-    ROLLING_WINDOW_HOURS,
 )
 from data_store import (
     compute_rolling_average,
     confirm_adjustment,
     get_all_adjustments,
+    get_all_mappings,
     get_confirmed_adjustments_window,
     get_current_flow_rate,
-    get_last_confirmed_adjustment,
     get_last_status,
+    get_mapping,
     get_measurements_window,
     get_pending_adjustment,
     init_db,
     insert_adjustment,
     insert_measurement,
     reject_pending_adjustment,
+    set_mapping,
     set_flow_state,
     supersede_pending_adjustments,
 )
 from decision_engine import classify_reading, compute_confidence, resolve_scenario
+from decision_context import (
+    MappingRequiredError,
+    MeasurementSourceError,
+    collect_decision_measurements,
+    get_required_mapping,
+    select_profile,
+)
 from evaluator import evaluate_last_adjustment
 from flow_controller import compute_proposed_rate, snap_to_doser
 from models import (
@@ -108,30 +116,6 @@ def _pending_is_stale(pending: AdjustmentRecord) -> bool:
     return pending.timestamp < now_utc() - timedelta(hours=PENDING_TTL_HOURS)
 
 
-def _decision_measurements(bt: BarbotineType) -> tuple[list[Measurement], float, bool]:
-    last_confirmed = get_last_confirmed_adjustment(bt)
-    window_hours = float(ROLLING_WINDOW_HOURS)
-    degraded = False
-
-    if last_confirmed is not None:
-        elapsed_hours = max(
-            0.0,
-            (now_utc() - last_confirmed.timestamp).total_seconds() / 3600,
-        )
-        window_hours = max(
-            float(POST_ADJUST_MIN_WINDOW_HOURS),
-            min(float(ROLLING_WINDOW_HOURS), elapsed_hours),
-        )
-
-    measurements = get_measurements_window(bt, window_hours)
-    if last_confirmed is not None and len(measurements) < MIN_MEASUREMENTS_FOR_EVAL:
-        degraded = True
-        window_hours = float(ROLLING_WINDOW_HOURS)
-        measurements = get_measurements_window(bt, ROLLING_WINDOW_HOURS)
-
-    return measurements, window_hours, degraded
-
-
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -160,8 +144,22 @@ def cmd_add_measurement(args: argparse.Namespace) -> None:
 
 def cmd_decide(args: argparse.Namespace) -> None:
     bt = _parse_type(args.type)
-    profile = PROFILES[bt]
+    try:
+        slurry_id = get_required_mapping(bt)
+    except MappingRequiredError as exc:
+        log.error("[%s] %s", bt.value, exc)
+        sys.exit(1)
+
+    profile_selection = select_profile(bt, slurry_id)
+    profile = profile_selection.profile
     doser = DOSER_CONFIGS[bt]
+    log.info(
+        "[%s] source: slurry=%s ranges=%s calibration=%s",
+        bt.value,
+        profile_selection.slurry_id or "standalone",
+        profile_selection.ranges_source,
+        CALIBRATION_STATUS,
+    )
 
     # Auto-evaluate previous adjustment before making a new decision
     outcome = evaluate_last_adjustment(bt)
@@ -171,7 +169,15 @@ def cmd_decide(args: argparse.Namespace) -> None:
             bt.value, outcome.verdict.value.upper(), outcome.detail,
         )
 
-    measurements, window_hours, window_degraded = _decision_measurements(bt)
+    try:
+        selection = collect_decision_measurements(bt, slurry_id)
+    except MeasurementSourceError as exc:
+        log.error("[%s] measurement source unavailable: %s", bt.value, exc)
+        sys.exit(1)
+
+    measurements = selection.measurements
+    window_hours = selection.window_hours
+    window_degraded = selection.window_degraded
     if not measurements:
         log.warning("No measurements in the last %.1f h for %s.", window_hours, bt.value)
         sys.exit(0)
@@ -299,13 +305,55 @@ def cmd_status(args: argparse.Namespace) -> None:
         doser = DOSER_CONFIGS[bt]
         diff = rate - base
         last_st = get_last_status(bt)
+        mapping = get_mapping(bt)
         status_str = ""
         if last_st:
             status_str = f"  [D={last_st.density.value} V={last_st.viscosity.value} CP={last_st.covering_power.value}]"
         print(
             f"  {bt.value:5s}  {rate:.4f} L/h  (base {base:.4f}, delta {diff:+.4f})"
-            f"  doser step={doser.increment}{status_str}"
+            f"  doser step={doser.increment}"
+            f"  mapped={mapping.slurry_id if mapping else '--'}"
+            f"  calibration={CALIBRATION_STATUS}{status_str}"
         )
+
+
+def cmd_map(args: argparse.Namespace) -> None:
+    if args.type is None:
+        records = {record.barbotine_type: record for record in get_all_mappings()}
+        for bt in BarbotineType:
+            record = records.get(bt)
+            if record is None:
+                print(f"  {bt.value:5s}  -- unmapped")
+            else:
+                print(
+                    f"  {bt.value:5s}  {record.slurry_id}"
+                    f"  updated={record.updated_at.isoformat()}"
+                )
+        return
+
+    bt = _parse_type(args.type)
+    if args.slurry_id is None:
+        record = get_mapping(bt)
+        if record is None:
+            print(f"  {bt.value:5s}  -- unmapped")
+        else:
+            print(
+                f"  {bt.value:5s}  {record.slurry_id}"
+                f"  updated={record.updated_at.isoformat()}"
+            )
+        return
+
+    slurry_id = args.slurry_id.strip()
+    if not slurry_id:
+        log.error("slurry_id must not be blank")
+        sys.exit(1)
+    record = set_mapping(bt, slurry_id)
+    log.info(
+        "[%s] mapped to slurry %s at %s",
+        bt.value,
+        record.slurry_id,
+        record.updated_at.isoformat(),
+    )
 
 
 def cmd_history(args: argparse.Namespace) -> None:
@@ -416,6 +464,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_st = sub.add_parser("status", help="Show current flow rates")
     p_st.add_argument("type", nargs="?", default=None)
 
+    p_map = sub.add_parser("map", help="List or set type-to-slurry mappings")
+    p_map.add_argument("type", nargs="?", default=None, help="Barbotine type")
+    p_map.add_argument("slurry_id", nargs="?", default=None, help="Dashboard slurry id")
+
     p_hist = sub.add_parser("history", help="Show measurement history")
     p_hist.add_argument("type")
     p_hist.add_argument("--hours", type=int, default=72)
@@ -441,6 +493,7 @@ def main() -> None:
         "confirm": cmd_confirm,
         "reject": cmd_reject,
         "status": cmd_status,
+        "map": cmd_map,
         "history": cmd_history,
         "analytics": cmd_analytics,
         "import-csv": cmd_import_csv,

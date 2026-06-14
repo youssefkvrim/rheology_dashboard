@@ -44,6 +44,7 @@ PENDING_TTL_HOURS: int = 4
 POST_ADJUST_MIN_WINDOW_HOURS: int = 6
 CONFLICT_NOTE: str = "Déviations opposées — l'eau seule ne peut pas corriger toutes les propriétés. Validation métier requise."
 DECREASE_NOTE: str = "Réduction du débit: ralentit la dilution future, ne peut pas augmenter la densité."
+CALIBRATION_STATUS: str = "UNVERIFIED"
 
 # ---------------------------------------------------------------------------
 # Confidence scoring
@@ -55,8 +56,11 @@ MIN_STEP: float = 0.0005       # L/h — minimum non-zero adjustment
 # Doser hardware configs — set per barbotine type based on installed hardware
 # ---------------------------------------------------------------------------
 DOSER_CONFIGS: dict[BarbotineType, DoserConfig] = {
+    # PLACEHOLDER — confirm against nameplate.
     BarbotineType.M7:  DoserConfig(min_rate=0.010, increment=0.002),
+    # PLACEHOLDER — confirm against nameplate.
     BarbotineType.CN2: DoserConfig(min_rate=0.010, increment=0.002),
+    # PLACEHOLDER — confirm against nameplate.
     BarbotineType.R55: DoserConfig(min_rate=0.010, increment=0.003),
 }
 
@@ -65,18 +69,21 @@ DOSER_CONFIGS: dict[BarbotineType, DoserConfig] = {
 # ---------------------------------------------------------------------------
 PROFILES: dict[BarbotineType, BarbotineProfile] = {
     BarbotineType.M7: BarbotineProfile(
+        # PLACEHOLDER — confirm against nameplate.
         base_flow_rate=0.019,
         density=PropertyRange(1.780, 1.820),
         viscosity=PropertyRange(18.0, 22.0),
         covering_power=PropertyRange(45.0, 55.0),
     ),
     BarbotineType.CN2: BarbotineProfile(
+        # PLACEHOLDER — confirm against nameplate.
         base_flow_rate=0.022,
         density=PropertyRange(1.720, 1.760),
         viscosity=PropertyRange(15.0, 19.0),
         covering_power=PropertyRange(40.0, 50.0),
     ),
     BarbotineType.R55: BarbotineProfile(
+        # PLACEHOLDER — confirm against nameplate.
         base_flow_rate=0.034,
         density=PropertyRange(1.650, 1.700),
         viscosity=PropertyRange(12.0, 16.0),

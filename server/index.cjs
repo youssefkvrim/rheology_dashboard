@@ -90,6 +90,7 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '');
 const SMTP_FROM = String(process.env.SMTP_FROM || '').trim();
+const INTERNAL_TOKEN = String(process.env.INTERNAL_TOKEN || '').trim();
 const SUPPORT_TO = 'youssef.karim@safrangroup.com';
 const LEGACY_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}(?::?\d{2})?$/;
 let HAS_COMPUTED_COLS = false;
@@ -429,6 +430,22 @@ function requireAuth(req, res, next) {
   }
 }
 
+function hasValidInternalToken(req) {
+  const presented = String(req.get('x-internal-token') || '').trim();
+  if (!INTERNAL_TOKEN || !presented) return false;
+  const expected = Buffer.from(INTERNAL_TOKEN);
+  const actual = Buffer.from(presented);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function requireAuthOrInternalRead(req, res, next) {
+  if (req.method === 'GET' && hasValidInternalToken(req)) {
+    req.user = { userId: 'internal:dosage', email: null, role: 'service' };
+    return next();
+  }
+  return requireAuth(req, res, next);
+}
+
 function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') {
     return res.status(403).json({ error: 'Admin role required' });
@@ -664,7 +681,7 @@ app.get('/api/rheology/latest-all', requireAuth, async (req, res) => {
 });
 
 // gets the full history of measurements for one slurry (for charts basically)
-app.get('/api/rheology/all', requireAuth, async (req, res) => {
+app.get('/api/rheology/all', requireAuthOrInternalRead, async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
     const paramsCsv = String(req.query.params || 'density,viscosity,pH,temperature,pc,H2O');
@@ -726,7 +743,7 @@ app.get('/api/rheology/all', requireAuth, async (req, res) => {
 });
 
 // just gets the upper/lower limits for a slurry's params
-app.get('/api/rheology/bounds', requireAuth, async (req, res) => {
+app.get('/api/rheology/bounds', requireAuthOrInternalRead, async (req, res) => {
   try {
     const slurryId = String(req.query.slurryId || '');
     if (!slurryId) return res.json([]);

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'vitest-secret';
+process.env.INTERNAL_TOKEN = 'vitest-internal';
 process.env.SMTP_HOST = '';
 process.env.SMTP_FROM = '';
 
@@ -115,6 +116,38 @@ describe('API authentication and validation', () => {
       expect(res.status).toBe(401);
       expect(res.body.error).toMatch(/Authorization|Invalid/);
     }
+  });
+
+  it('allows internal-token reads only for dosage source endpoints', async () => {
+    __test.setPool(createPool());
+
+    const all = await request(app)
+      .get('/api/rheology/all?slurryId=A&params=density')
+      .set('X-Internal-Token', 'vitest-internal');
+    expect(all.status).toBe(200);
+    expect(all.body).toEqual({ series: {} });
+
+    const bounds = await request(app)
+      .get('/api/rheology/bounds?slurryId=A')
+      .set('X-Internal-Token', 'vitest-internal');
+    expect(bounds.status).toBe(200);
+    expect(bounds.body).toEqual([]);
+
+    const badToken = await request(app)
+      .get('/api/rheology/all?slurryId=A')
+      .set('X-Internal-Token', 'wrong');
+    expect(badToken.status).toBe(401);
+
+    const slurries = await request(app)
+      .get('/api/slurries')
+      .set('X-Internal-Token', 'vitest-internal');
+    expect(slurries.status).toBe(401);
+
+    const write = await request(app)
+      .post('/api/rheology/point')
+      .set('X-Internal-Token', 'vitest-internal')
+      .send({ slurryId: 'A', parameter: 'density', value: 1.8 });
+    expect(write.status).toBe(401);
   });
 
   it('returns validation errors for malformed auth, support, and write payloads', async () => {

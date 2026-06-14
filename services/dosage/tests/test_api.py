@@ -8,11 +8,13 @@ import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 _TMP = tempfile.TemporaryDirectory()
 os.environ["DOSAGE_DB_PATH"] = str(Path(_TMP.name) / "api-test.db")
+os.environ["DOSAGE_STANDALONE"] = "1"
 
 from fastapi.testclient import TestClient
 
@@ -106,6 +108,26 @@ class TestDosageApi(unittest.TestCase):
         with TestClient(api.app) as client:
             response = client.post("/decisions/BAD")
         self.assertEqual(response.status_code, 400)
+
+    def test_decide_requires_mapping_outside_standalone_mode(self):
+        with (
+            patch.dict(os.environ, {"DOSAGE_STANDALONE": ""}),
+            TestClient(api.app) as client,
+        ):
+            response = client.post("/decisions/M7")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "no slurry mapped for M7")
+
+    def test_mapping_endpoints_set_and_list_slurry_ids(self):
+        with TestClient(api.app) as client:
+            updated = client.put("/mapping/M7", json={"slurry_id": "M73006"})
+            listed = client.get("/mapping")
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["barbotine_type"], "M7")
+        self.assertEqual(updated.json()["slurry_id"], "M73006")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["slurry_id"], "M73006")
 
     def test_reject_supersedes_pending_without_flow_change(self):
         self._add_measurements()

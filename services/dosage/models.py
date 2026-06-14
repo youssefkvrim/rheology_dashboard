@@ -127,3 +127,10 @@ class ActionOutcome:
     detail: str = ""
     evaluated_at: datetime = field(default_factory=now_utc)
     id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class MappingRecord:
+    barbotine_type: BarbotineType
+    slurry_id: str
+    updated_at: datetime

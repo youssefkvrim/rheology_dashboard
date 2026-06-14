@@ -25,6 +25,7 @@ from models import (
     BarbotineType,
     ConfidenceScore,
     Decision,
+    MappingRecord,
     Measurement,
     OutcomeVerdict,
     PropertyStatus,
@@ -125,6 +126,12 @@ def init_db(path: Path = DB_PATH) -> None:
                 evaluated_at    TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS mapping (
+                barbotine_type  TEXT PRIMARY KEY,
+                slurry_id       TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_meas_type_ts
                 ON measurements(barbotine_type, timestamp);
             CREATE INDEX IF NOT EXISTS idx_adj_type_ts
@@ -209,6 +216,61 @@ def compute_rolling_average(measurements: list[Measurement]) -> RheologyReading 
         covering_power=round(sum(m.reading.covering_power for m in measurements) / n, 6),
         temperature=round(sum(temps) / len(temps), 2) if temps else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Mapping
+# ---------------------------------------------------------------------------
+
+def set_mapping(
+    btype: BarbotineType,
+    slurry_id: str,
+    path: Path = DB_PATH,
+) -> MappingRecord:
+    updated_at = now_utc()
+    with _connect(path) as conn:
+        conn.execute(
+            """INSERT INTO mapping (barbotine_type, slurry_id, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(barbotine_type)
+               DO UPDATE SET slurry_id = excluded.slurry_id,
+                             updated_at = excluded.updated_at""",
+            (btype.value, slurry_id, updated_at.isoformat()),
+        )
+    return MappingRecord(btype, slurry_id, updated_at)
+
+
+def get_mapping(
+    btype: BarbotineType,
+    path: Path = DB_PATH,
+) -> MappingRecord | None:
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT barbotine_type, slurry_id, updated_at FROM mapping WHERE barbotine_type = ?",
+            (btype.value,),
+        ).fetchone()
+    if row is None:
+        return None
+    return MappingRecord(
+        BarbotineType(row["barbotine_type"]),
+        row["slurry_id"],
+        _parse_ts(row["updated_at"]),
+    )
+
+
+def get_all_mappings(path: Path = DB_PATH) -> list[MappingRecord]:
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT barbotine_type, slurry_id, updated_at FROM mapping ORDER BY barbotine_type"
+        ).fetchall()
+    return [
+        MappingRecord(
+            BarbotineType(row["barbotine_type"]),
+            row["slurry_id"],
+            _parse_ts(row["updated_at"]),
+        )
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
